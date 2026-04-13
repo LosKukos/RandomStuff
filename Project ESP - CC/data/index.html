@@ -1,0 +1,138 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>AXIS Control</title>
+<link rel="stylesheet" href="css/demo.css">
+</head>
+<body>
+
+<div id="loader">
+  <div id="progress-bar"></div>
+  <div id="loader-text">Initializing...</div>
+</div>
+
+<header class="navbar">
+  <div class="container navbar-inner">
+    <div class="logo-wrapper">
+      <div class="logo">AXIS</div>
+      <div class="logo-sub">Control Interface</div>
+    </div>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="container">
+    <h1>ME Storage Control</h1>
+    <p id="status">Connecting...</p>
+  </div>
+</section>
+
+<section>
+  <div class="container">
+
+    <input id="search" placeholder="Search item...">
+
+    <div class="card-grid" id="items"></div>
+
+  </div>
+</section>
+
+<script>
+let storage = [];
+let ws;
+
+// ===== LOAD ME =====
+async function loadME() {
+  const res = await fetch('/api/me/list');
+  const data = await res.json();
+
+  storage = data.items || [];
+  render(storage);
+}
+
+// ===== RENDER =====
+function render(items) {
+  const container = document.getElementById("items");
+  container.innerHTML = "";
+
+  items.slice(0, 200).forEach(item => {
+
+    const div = document.createElement("div");
+    div.className = "card";
+
+    div.innerHTML = `
+      <h3>${item.name}</h3>
+      <p>${item.count}</p>
+      <input type="number" value="1" id="c_${item.name}">
+      <button onclick="craft('${item.name}')">Craft</button>
+    `;
+
+    container.appendChild(div);
+  });
+}
+
+// ===== SEARCH =====
+document.getElementById("search").addEventListener("input", (e) => {
+  const q = e.target.value.toLowerCase();
+
+  const filtered = storage.filter(i =>
+    i.name.toLowerCase().includes(q)
+  );
+
+  render(filtered);
+});
+
+// ===== CRAFT =====
+async function craft(name) {
+  const count = document.getElementById("c_" + name).value;
+
+  await fetch('/api/command', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      type: "craft",
+      payload: {
+        item: name,
+        count: Number(count)
+      }
+    })
+  });
+}
+
+// ===== WS =====
+function connectWS() {
+  ws = new WebSocket(`ws://${location.host}/ws`);
+
+  ws.onopen = () => {
+    document.getElementById("status").textContent = "ONLINE";
+  };
+
+  ws.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+
+    // refresh ME on any event
+    loadME();
+  };
+
+  ws.onclose = () => {
+    document.getElementById("status").textContent = "RECONNECTING";
+    setTimeout(connectWS, 2000);
+  };
+}
+
+// ===== INIT =====
+document.addEventListener("DOMContentLoaded", async () => {
+
+  await loadME();
+
+  document.getElementById("loader").style.display = "none";
+
+  connectWS();
+
+  setInterval(loadME, 10000); // fallback refresh
+});
+</script>
+
+</body>
+</html>
