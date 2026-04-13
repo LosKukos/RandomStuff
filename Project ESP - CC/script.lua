@@ -3,7 +3,7 @@ local ESP_BASE = "http://" .. ESP_IP
 local WS_URL = "ws://" .. ESP_IP .. "/ws"
 local BRIDGE_SIDE = "right"   -- uprav podle reality
 local SYNC_INTERVAL = 10      -- sekundy
-local LIMIT = 500             -- max itemů do snapshotu
+local LIMIT = 10000             -- max itemů do snapshotu
 
 local ae = peripheral.wrap(BRIDGE_SIDE)
 if not ae then
