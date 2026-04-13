@@ -1,0 +1,71 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>AXIS Config</title>
+<link rel="stylesheet" href="css/demo.css">
+</head>
+<body>
+
+<h1>ESP CONFIG PANEL</h1>
+
+<section>
+  <h2>WiFi Setup</h2>
+
+  <input id="ssid" placeholder="SSID"><br><br>
+  <input id="pass" placeholder="Password"><br><br>
+
+  <button onclick="saveConfig()">Save</button>
+</section>
+
+<section>
+  <h2>System Debug</h2>
+  <pre id="debug"></pre>
+</section>
+
+<section>
+  <h2>Logs</h2>
+  <pre id="logs"></pre>
+</section>
+
+<script>
+
+// ===== CONFIG =====
+async function saveConfig() {
+  const ssid = document.getElementById("ssid").value;
+  const pass = document.getElementById("pass").value;
+
+  await fetch('/api/config', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ssid, pass})
+  });
+
+  alert("Saved");
+}
+
+// ===== DEBUG =====
+async function loadDebug() {
+  const res = await fetch('/api/debug');
+  const data = await res.json();
+
+  document.getElementById("debug").textContent =
+    JSON.stringify(data, null, 2);
+}
+
+// ===== LOGS =====
+async function loadLogs() {
+  const res = await fetch('/api/logs');
+  const data = await res.json();
+
+  document.getElementById("logs").textContent =
+    JSON.stringify(data, null, 2);
+}
+
+setInterval(loadDebug, 2000);
+setInterval(loadLogs, 3000);
+
+</script>
+
+</body>
+</html>
