@@ -1,24 +1,27 @@
--- demo_master.lua
--- Jednoduchý end-to-end test:
--- ME -> bridge chest -> buffer chest -> packager -> depot
+-- poc_master.lua
+-- Proof of concept:
+-- ME -> bridge chest -> buffer chest -> packager -> depot -> dál
 
 -- =========================
--- CONFIG
+-- KONFIG
 -- =========================
-local ME_BRIDGE = "right"                 -- peripheral name nebo side
-local PACKAGER = "left"                   -- peripheral name nebo side
-local BUFFER_INV = "minecraft:chest_0"    -- jméno buffer chestky
-local DEPOT = "back"                      -- peripheral name nebo side depotu
-local CLUTCH_REDSTONE_SIDE = "back"        -- redstone side pro clutch
+local ME_BRIDGE = "right"            -- side/jméno ME bridge periferie
+local PACKAGER = "left"              -- side/jméno packager periferie
+local DEPOT = "back"                 -- side/jméno depotu
+local BRIDGE_CHEST_DIRECTION = "up"  -- směr od ME bridge do bridge chest
+local CLUTCH_REDSTONE_SIDE = "top"   -- redstone výstup na clutch ZA depotem
 
--- jak dlouho čekat na jednotlivé kroky
-local EXPORT_TIMEOUT = 5
-local PACKAGE_TIMEOUT = 8
-
--- clutch režim:
--- true = clutch zapnutá když je redstone ON
--- false = clutch zapnutá když je redstone OFF
+-- clutch logika:
+-- true  = redstone ON => belt jede
+-- false = redstone OFF => belt jede
 local CLUTCH_ON_HIGH = true
+
+-- timeouty
+local DEPOT_TIMEOUT = 10
+local DEPOT_CLEAR_TIMEOUT = 5
+
+-- polling
+local POLL_INTERVAL = 0.1
 
 -- =========================
 -- HELPERS
@@ -31,12 +34,12 @@ local function clutchSet(enabled)
   redstone.setOutput(CLUTCH_REDSTONE_SIDE, signal)
 end
 
-local function clutchStop()
-  clutchSet(false)
-end
-
 local function clutchRun()
   clutchSet(true)
+end
+
+local function clutchStop()
+  clutchSet(false)
 end
 
 local function prompt(text, default)
@@ -52,57 +55,24 @@ local function prompt(text, default)
   return v
 end
 
-local function dump(value)
-  print(textutils.serialise(value))
-end
-
-local function now()
-  return os.epoch("utc")
-end
-
-local function wrapPeripheral(name, label)
-  local p = peripheral.wrap(name)
-  if not p then
-    error("Nenalezl jsem periferii pro " .. label .. ": " .. tostring(name))
-  end
-  return p
+local function dump(v)
+  print(textutils.serialise(v))
 end
 
 local function safeCall(fn, ...)
   local ok, a, b, c, d = pcall(fn, ...)
   if not ok then
-    return false, a
+    return false, a, b, c, d
   end
   return true, a, b, c, d
 end
 
-local function getBufferItemCount(inv, wantedName)
-  local ok, list = safeCall(inv.list)
-  if not ok or type(list) ~= "table" then
-    return 0
+local function wrapPeripheral(name, label)
+  local p = peripheral.wrap(name)
+  if not p then
+    error("Nenalezena periferie pro " .. label .. ": " .. tostring(name))
   end
-
-  local total = 0
-  for _, item in pairs(list) do
-    if item.name == wantedName then
-      total = total + (item.count or 0)
-    end
-  end
-  return total
-end
-
-local function waitForBufferCount(inv, wantedName, minCount, timeoutSec)
-  local deadline = os.clock() + timeoutSec
-
-  while os.clock() < deadline do
-    local count = getBufferItemCount(inv, wantedName)
-    if count >= minCount then
-      return true, count
-    end
-    sleep(0.1)
-  end
-
-  return false, getBufferItemCount(inv, wantedName)
+  return p
 end
 
 local function waitForDepotPackage(depot, timeoutSec)
@@ -113,7 +83,7 @@ local function waitForDepotPackage(depot, timeoutSec)
     if ok and item and item.package then
       return true, item
     end
-    sleep(0.1)
+    sleep(POLL_INTERVAL)
   end
 
   return false, nil
@@ -127,127 +97,143 @@ local function waitForDepotEmpty(depot, timeoutSec)
     if ok and not item then
       return true
     end
-    sleep(0.1)
+    sleep(POLL_INTERVAL)
   end
 
   return false
 end
 
+local function getPackageAddress(pkg)
+  local ok, addr = safeCall(function()
+    return pkg:getAddress()
+  end)
+
+  if not ok then
+    return false, addr
+  end
+
+  return true, addr
+end
+
+local function getPackageList(pkg)
+  local ok, lst = safeCall(function()
+    return pkg:list()
+  end)
+
+  if not ok then
+    return false, lst
+  end
+
+  return true, lst
+end
+
+local function printHeader(title)
+  print("")
+  print(("="):rep(36))
+  print(title)
+  print(("="):rep(36))
+end
+
 -- =========================
 -- INIT
 -- =========================
-local me = wrapPeripheral(ME_BRIDGE, "ME bridge")
+local me = wrapPeripheral(ME_BRIDGE, "ME Bridge")
 local packager = wrapPeripheral(PACKAGER, "Packager")
-local bufferInv = wrapPeripheral(BUFFER_INV, "Buffer chest")
 local depot = wrapPeripheral(DEPOT, "Depot")
 
--- defaultně zastavit pohyb za packagerem/depotem
+-- defaultně drž dálkovou linku zavřenou
 clutchStop()
 
-print("=== DEMO MASTER TEST ===")
-print("Time:", now())
+printHeader("DEMO MASTER POC")
 
 local itemName = prompt("Item name", "minecraft:iron_ingot")
-local count = tonumber(prompt("Count", "16"))
-local address = prompt("Package address", "TEST|P01")
+local count = tonumber(prompt("Count", "32"))
+local address = prompt("Package address", "ORD0001|P01")
 
 if not count or count < 1 then
-  error("Neplatny count")
+  error("Neplatný count")
 end
 
 print("")
-print("Item:", itemName)
-print("Count:", count)
-print("Address:", address)
-print("Buffer inventory:", BUFFER_INV)
+print("Item:    " .. tostring(itemName))
+print("Count:   " .. tostring(count))
+print("Address: " .. tostring(address))
 print("")
 
 -- =========================
--- 1) nastav address packageru
+-- 1) Nastav address na packageru
 -- =========================
 do
-  local ok, res = safeCall(packager.setAddress, address)
-  if not ok then
-    error("packager.setAddress selhal: " .. tostring(res))
+  local okSet, setRes = safeCall(packager.setAddress, address)
+  if not okSet then
+    error("packager.setAddress selhal: " .. tostring(setRes))
   end
 
-  local ok2, currentAddress = safeCall(packager.getAddress)
-  if not ok2 then
+  local okGet, currentAddress = safeCall(packager.getAddress)
+  if not okGet then
     error("packager.getAddress selhal: " .. tostring(currentAddress))
   end
 
-  print("[1/6] Packager address set:", currentAddress)
+  print("[1/6] Packager address:", tostring(currentAddress))
 
   if currentAddress ~= address then
-    error("Packager address mismatch. Ocekavano " .. tostring(address) .. ", dostal jsem " .. tostring(currentAddress))
+    error("Address mismatch na packageru. Ocekavano " .. tostring(address) .. ", je " .. tostring(currentAddress))
   end
 end
 
 -- =========================
--- 2) export z ME do buffer chest
+-- 2) Export z ME do bridge chest
 -- =========================
 do
-  local moved, err = me.exportItemToPeripheral(
+  local moved, err = me.exportItem(
     {
       name = itemName,
       count = count
     },
-    BUFFER_INV
+    BRIDGE_CHEST_DIRECTION
   )
 
-  print("[2/6] exportItemToPeripheral moved:", tostring(moved), "err:", tostring(err))
+  print("[2/6] exportItem -> moved:", tostring(moved), "err:", tostring(err))
 
   if not moved or moved < count then
-    error("ME export nepresunul dost itemu. Requested=" .. tostring(count) .. " moved=" .. tostring(moved))
+    error("ME export nedodal dost itemu. Requested=" .. tostring(count) .. " moved=" .. tostring(moved))
   end
 end
 
 -- =========================
--- 3) zkontroluj buffer chest
+-- 3) Počkej na Create chain
 -- =========================
-do
-  local ok, actual = waitForBufferCount(bufferInv, itemName, count, EXPORT_TIMEOUT)
-  print("[3/6] Buffer check:", ok, "count:", actual)
-
-  if not ok then
-    error("Buffer chest nedostala dost itemu. Ma jen " .. tostring(actual))
-  end
-end
-
-print("[4/6] Stiskni ENTER az Create chain presune item do packageru a jsi ready na makePackage()")
+print("[3/6] Nech Create chain presunout item do packageru.")
+print("       Az bude item ready k zabalení, stiskni ENTER.")
 read()
 
 -- =========================
--- 4) make package
+-- 4) Vytvoř balík
 -- =========================
 do
-  local ok, res = safeCall(packager.makePackage, true)
-  print("[4/6] makePackage:", ok, tostring(res))
+  local okMake, makeRes = safeCall(packager.makePackage, true)
+  print("[4/6] makePackage(true):", tostring(okMake), tostring(makeRes))
 
-  if not ok then
-    error("makePackage selhal: " .. tostring(res))
+  if not okMake then
+    error("makePackage selhal: " .. tostring(makeRes))
   end
 end
 
 -- =========================
--- 5) pust balicek na depot
+-- 5) Počkej na balík na depotu
+-- clutch za depotem je STOP, takže balík má zůstat na depotu
 -- =========================
-print("[5/6] Poustim clutch, cekam na balicek na depotu...")
-clutchRun()
+print("[5/6] Cekam na balicek na depotu...")
 
-local gotPackage, depotItem = waitForDepotPackage(depot, PACKAGE_TIMEOUT)
-
--- hned znovu stop, at ti to neujede do Narnie
-clutchStop()
-
+local gotPackage, depotItem = waitForDepotPackage(depot, DEPOT_TIMEOUT)
 if not gotPackage then
-  error("Balicek nedorazil na depot v casovem limitu")
+  error("Balicek nedorazil na depot v časovém limitu")
 end
 
-print("[5/6] Balicek je na depotu")
+print("[5/6] Balicek detekovan na depotu.")
 
 -- =========================
--- 6) precti a zkontroluj
+-- 6) Přečti a ověř balík
 -- =========================
 do
   local pkg = depotItem.package
@@ -255,55 +241,41 @@ do
     error("Depot item nema package API")
   end
 
-  local okAddr, depotAddress = safeCall(function()
-    return pkg:getAddress()
-  end)
-
+  local okAddr, depotAddress = getPackageAddress(pkg)
   if not okAddr then
     error("pkg:getAddress() selhal: " .. tostring(depotAddress))
   end
 
-  print("[6/6] Depot package address:", depotAddress)
-
-  local okList, contents = safeCall(function()
-    return pkg:list()
-  end)
-
-  if not okList then
-    print("pkg:list() selhalo:", tostring(contents))
-  else
-    print("Package contents:")
-    dump(contents)
-  end
-
-  local okOrder, orderData = safeCall(function()
-    return pkg:getOrderData()
-  end)
-
-  if okOrder then
-    print("Order data:")
-    dump(orderData)
-  else
-    print("pkg:getOrderData() selhalo nebo neni pouzitelne:", tostring(orderData))
-  end
+  print("[6/6] Depot address:", tostring(depotAddress))
 
   if depotAddress ~= address then
     error("Address mismatch na depotu. Ocekavano " .. tostring(address) .. ", prislo " .. tostring(depotAddress))
   end
 
+  local okList, contents = getPackageList(pkg)
+  if okList then
+    print("")
+    print("Package contents:")
+    dump(contents)
+  else
+    print("pkg:list() selhalo:", tostring(contents))
+  end
+
   print("")
-  print("=== SUCCESS ===")
-  print("Balicek byl vytvoren a overen na depotu.")
+  print("SUCCESS: Balicek byl uspesne vytvoren a overen.")
 end
 
+-- =========================
+-- Uvolni balík dál
+-- =========================
 print("")
-print("Chces-li ho pustit dal, stiskni ENTER.")
+print("Stiskni ENTER pro pusteni balicku dal za depot.")
 read()
 
 clutchRun()
 sleep(0.5)
 clutchStop()
 
-waitForDepotEmpty(depot, 3)
-
+local cleared = waitForDepotEmpty(depot, DEPOT_CLEAR_TIMEOUT)
+print("Depot empty:", tostring(cleared))
 print("Hotovo.")
