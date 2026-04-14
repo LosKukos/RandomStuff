@@ -1,14 +1,19 @@
--- master_poc_v5.lua
--- PoC master logiky bez manualniho ENTERu
--- Bez partial pullu z ME
--- Spravny flow:
---   export -> cekani na item v buffer chest -> kratke ustaleni -> makePackage()
---   -> cteni na depotu -> SET pulse do SR latch
+-- master_v6.lua
+-- MASTER V6
+-- order queue z ESP + packaging pipeline
+--
+-- Flow:
+-- 1) stahni pending orders z ESP
+-- 2) rozsekaj itemy na balicky po 64
+-- 3) kazdy balik zabal
+-- 4) registruj package do ESP
+-- 5) update order status
 
 -- ==================================================
 -- CONFIG
 -- ==================================================
 local CFG = {
+  -- peripherals
   meBridge = "me_bridge_0",                  -- peripheral name/side
   packager = "Create_Packager_0",                   -- peripheral name/side
   bufferChest = "minecraft:barrel_0",   -- jmeno buffer chest
@@ -16,51 +21,31 @@ local CFG = {
   bridgeChestDirection = "right",         -- smer exportu z ME bridge do bridge chest
   armSetRedstoneSide = "back",          -- SET vstup SR latch
 
+  -- esp
+  espBase = "http://10.0.1.17",
+
+  -- timing
   bufferAppearTimeout = 10,
   depotTimeout = 10,
   depotClearTimeout = 5,
-
-  -- malá prodleva po detekci itemu v bufferu, ať se Create chain ustálí
   settleDelay = 0.5,
-
   setPulse = 0.15,
   poll = 0.1,
+  idleSleep = 3,
 }
 
 -- ==================================================
 -- UTILS
 -- ==================================================
-local function prompt(text, default)
-  write(text)
-  if default ~= nil then
-    write(" [" .. tostring(default) .. "]")
-  end
-  write(": ")
-  local v = read()
-  if v == "" and default ~= nil then
-    return default
-  end
-  return v
-end
-
-local function promptOptional(text)
-  write(text .. " (leave empty if not needed): ")
-  local v = read()
-  if v == "" then
-    return nil
-  end
-  return v
-end
-
 local function dump(v)
   print(textutils.serialise(v))
 end
 
 local function printHeader(title)
   print("")
-  print(("="):rep(52))
+  print(("="):rep(56))
   print(title)
-  print(("="):rep(52))
+  print(("="):rep(56))
 end
 
 local function safeCall(fn, ...)
@@ -85,8 +70,8 @@ local function pulseSet(side, pulseLength)
   redstone.setOutput(side, false)
 end
 
-local function lower(s)
-  return string.lower(tostring(s or ""))
+local function makePackageId(orderId, idx)
+  return string.format("%s|P%02d", orderId, idx)
 end
 
 -- ==================================================
@@ -100,35 +85,50 @@ local depot = wrapPeripheral(CFG.depot, "Depot")
 redstone.setOutput(CFG.armSetRedstoneSide, false)
 
 -- ==================================================
--- FILTER / MATCHING
+-- HTTP / ESP
 -- ==================================================
-local function buildFilterFromPrompt()
-  local itemName = prompt("Item name", "minecraft:iron_ingot")
-  local count = tonumber(prompt("Count", "16"))
-  local address = prompt("Package address", "ORD0001|P01")
-  local nbt = promptOptional("NBT")
-  local fingerprint = promptOptional("Fingerprint")
+local function postJson(path, payload)
+  local url = CFG.espBase .. path
+  local body = textutils.serialiseJSON(payload)
 
-  if not count or count < 1 then
-    error("Neplatny count")
+  local res, err = http.post(url, body, {
+    ["Content-Type"] = "application/json"
+  })
+
+  if not res then
+    return false, err
   end
 
-  local filter = {
-    name = itemName,
-    count = count
-  }
+  local raw = res.readAll()
+  res.close()
 
-  if nbt then
-    filter.nbt = nbt
+  local ok, data = pcall(textutils.unserialiseJSON, raw)
+  if not ok then
+    return false, "invalid_json_response"
   end
 
-  if fingerprint then
-    filter.fingerprint = fingerprint
-  end
-
-  return filter, address
+  return true, data
 end
 
+local function espGetPendingOrders()
+  return postJson("/api/orders/pending", {})
+end
+
+local function espUpdateOrder(orderId, status, meta)
+  return postJson("/api/orders/update", {
+    orderId = orderId,
+    status = status,
+    meta = meta or {}
+  })
+end
+
+local function espRegisterPackage(pkg)
+  return postJson("/api/package/register", pkg)
+end
+
+-- ==================================================
+-- MATCHING / ME
+-- ==================================================
 local function matchesItem(item, filter)
   if filter.name and item.name ~= filter.name then
     return false
@@ -169,8 +169,57 @@ local function getAvailableCount(filter)
   return item.amount or item.count or 0, nil, item
 end
 
+local function precheckME(filter)
+  local available, err, meItem = getAvailableCount(filter)
+
+  if available < (filter.count or 1) then
+    return false, {
+      reason = "not_enough_items",
+      requested = filter.count,
+      available = available,
+      matchError = err,
+      meItem = meItem
+    }
+  end
+
+  return true, {
+    available = available,
+    meItem = meItem
+  }
+end
+
+local function exportIfEnough(filter)
+  local requested = tonumber(filter.count) or 1
+  local available, err, meItem = getAvailableCount(filter)
+
+  if available < requested then
+    return false, {
+      reason = "not_enough_items",
+      requested = requested,
+      available = available,
+      matchError = err,
+      meItem = meItem
+    }
+  end
+
+  local moved, exportErr = me.exportItem(filter, CFG.bridgeChestDirection)
+
+  if not moved or moved < requested then
+    return false, {
+      reason = "unexpected_partial_or_export_fail",
+      requested = requested,
+      moved = moved or 0,
+      err = exportErr
+    }
+  end
+
+  return true, {
+    moved = moved
+  }
+end
+
 -- ==================================================
--- BUFFER / DEPOT HELPERS
+-- BUFFER / DEPOT
 -- ==================================================
 local function getBufferCount(filter)
   local ok, items = safeCall(bufferChest.list)
@@ -236,8 +285,26 @@ local function waitForDepotEmpty(timeoutSec)
   return false
 end
 
+local function waitForCreateFeed(filter)
+  local okAppear, actualAppear = waitForBufferAtLeast(filter, filter.count, CFG.bufferAppearTimeout)
+  if not okAppear then
+    return false, {
+      reason = "buffer_appear_timeout",
+      actual = actualAppear,
+      expected = filter.count
+    }
+  end
+
+  sleep(CFG.settleDelay)
+
+  return true, {
+    appeared = actualAppear,
+    settled = true
+  }
+end
+
 -- ==================================================
--- PACKAGER / PACKAGE HELPERS
+-- PACKAGER / PACKAGE
 -- ==================================================
 local function setPackagerAddress(address)
   local ok, res = safeCall(packager.setAddress, address)
@@ -316,87 +383,61 @@ local function releaseFromDepot()
 end
 
 -- ==================================================
--- ME EXPORT WITHOUT PARTIAL PULL
+-- ORDER SPLIT
 -- ==================================================
-local function exportIfEnough(filter)
-  local requested = tonumber(filter.count) or 1
-  local available, err, meItem = getAvailableCount(filter)
+local function splitOrderToPackages(order)
+  local out = {}
+  local idx = 1
 
-  if available < requested then
-    return false, {
-      reason = "not_enough_items",
-      requested = requested,
-      available = available,
-      matchError = err,
-      meItem = meItem
-    }
+  for _, item in ipairs(order.items or {}) do
+    local remaining = tonumber(item.count) or 0
+
+    while remaining > 0 do
+      local chunk = math.min(64, remaining)
+
+      local filter = {
+        name = item.name,
+        count = chunk
+      }
+
+      if item.nbt then
+        filter.nbt = item.nbt
+      end
+
+      if item.fingerprint then
+        filter.fingerprint = item.fingerprint
+      end
+
+      table.insert(out, {
+        packageId = makePackageId(order.orderId, idx),
+        orderId = order.orderId,
+        destination = order.destination,
+        deliveryMode = order.deliveryMode,
+        recipient = order.recipient,
+        filter = filter
+      })
+
+      remaining = remaining - chunk
+      idx = idx + 1
+    end
   end
 
-  local moved, exportErr = me.exportItem(filter, CFG.bridgeChestDirection)
-
-  if not moved or moved < requested then
-    return false, {
-      reason = "unexpected_partial_or_export_fail",
-      requested = requested,
-      moved = moved or 0,
-      err = exportErr
-    }
-  end
-
-  return true, {
-    moved = moved
-  }
+  return out
 end
 
 -- ==================================================
--- CORE FLOW
+-- CORE PACK FLOW
 -- ==================================================
-local function precheckME(filter)
-  local available, err, meItem = getAvailableCount(filter)
-
-  if available < (filter.count or 1) then
-    return false, {
-      reason = "not_enough_items",
-      requested = filter.count,
-      available = available,
-      matchError = err,
-      meItem = meItem
-    }
-  end
-
-  return true, {
-    available = available,
-    meItem = meItem
-  }
-end
-
-local function waitForCreateFeed(filter)
-  local okAppear, actualAppear = waitForBufferAtLeast(filter, filter.count, CFG.bufferAppearTimeout)
-  if not okAppear then
-    return false, {
-      reason = "buffer_appear_timeout",
-      actual = actualAppear,
-      expected = filter.count
-    }
-  end
-
-  sleep(CFG.settleDelay)
-
-  return true, {
-    appeared = actualAppear,
-    settled = true
-  }
-end
-
-local function packOnePackage(filter, address)
+local function packOnePackage(job)
   local result = {
-    filter = filter,
-    address = address
+    packageId = job.packageId,
+    orderId = job.orderId,
+    filter = job.filter,
+    address = job.packageId
   }
 
-  -- 1) pre-check ME
   do
-    local ok, data = precheckME(filter)
+    local ok, data = precheckME(job.filter)
     result.precheck = data
     if not ok then
       result.reason = data
@@ -404,9 +445,8 @@ local function packOnePackage(filter, address)
     end
   end
 
-  -- 2) set address
   do
-    local ok, addrRes = setPackagerAddress(address)
+    local ok, addrRes = setPackagerAddress(job.packageId)
     result.packagerAddress = addrRes
     if not ok then
       result.reason = addrRes
@@ -414,9 +454,8 @@ local function packOnePackage(filter, address)
     end
   end
 
-  -- 3) export from ME
   do
-    local ok, data = exportIfEnough(filter)
+    local ok, data = exportIfEnough(job.filter)
     result.export = data
     if not ok then
       result.reason = data
@@ -424,9 +463,8 @@ local function packOnePackage(filter, address)
     end
   end
 
-  -- 4) wait for buffer appear + settle
   do
-    local ok, data = waitForCreateFeed(filter)
+    local ok, data = waitForCreateFeed(job.filter)
     result.buffer = data
     if not ok then
       result.reason = data
@@ -434,7 +472,6 @@ local function packOnePackage(filter, address)
     end
   end
 
-  -- 5) make package
   do
     local ok, data = makePackage()
     result.makePackage = data
@@ -444,9 +481,8 @@ local function packOnePackage(filter, address)
     end
   end
 
-  -- 6) inspect on depot
   do
-    local ok, data = readDepotPackage(address)
+    local ok, data = readDepotPackage(job.packageId)
     result.depot = data
     if not ok then
       result.reason = data
@@ -454,7 +490,6 @@ local function packOnePackage(filter, address)
     end
   end
 
-  -- 7) release via SR latch
   do
     local ok, data = releaseFromDepot()
     result.release = data or true
@@ -468,7 +503,7 @@ local function packOnePackage(filter, address)
 end
 
 -- ==================================================
--- RESULT PRINTING
+-- RESULT PRINT
 -- ==================================================
 local function printReason(result)
   local reason = result.reason
@@ -481,8 +516,6 @@ local function printReason(result)
     reason = result.buffer
   elseif not reason and type(result.depot) == "table" and result.depot.reason then
     reason = result.depot
-  elseif not reason and type(result.release) == "table" and result.release.reason then
-    reason = result.release
   end
 
   print("Reason:")
@@ -495,10 +528,9 @@ local function printReason(result)
   end
 end
 
-local function printResult(ok, result)
-  printHeader(ok and "SUCCESS" or "FAIL")
+local function printPackageResult(ok, result)
+  printHeader(ok and ("PACKAGE OK " .. tostring(result.packageId)) or ("PACKAGE FAIL " .. tostring(result.packageId)))
 
-  print("Address: " .. tostring(result.address))
   print("Filter:")
   dump(result.filter)
 
@@ -531,26 +563,106 @@ local function printResult(ok, result)
 end
 
 -- ==================================================
--- UI / MAIN LOOP
+-- PROCESS ORDER
 -- ==================================================
+local function processOrder(order)
+  printHeader("PROCESS ORDER " .. tostring(order.orderId))
+  dump(order)
+
+  espUpdateOrder(order.orderId, "processing", {})
+
+  local jobs = splitOrderToPackages(order)
+  local packedIds = {}
+
+  for _, job in ipairs(jobs) do
+    local ok, result = packOnePackage(job)
+    printPackageResult(ok, result)
+
+    if not ok then
+      espUpdateOrder(order.orderId, "failed", {
+        packageId = job.packageId,
+        reason = result.reason
+      })
+      return false, result
+    end
+
+    local registerOk, registerRes = espRegisterPackage({
+      packageId = job.packageId,
+      orderId = job.orderId,
+      destination = job.destination,
+      deliveryMode = job.deliveryMode,
+      recipient = job.recipient,
+      address = job.packageId,
+      contents = result.depot and result.depot.contents or {},
+      filter = job.filter
+    })
+
+    if not registerOk or not registerRes or registerRes.ok == false then
+      espUpdateOrder(order.orderId, "failed", {
+        packageId = job.packageId,
+        reason = "package_register_failed",
+        detail = registerRes or registerOk
+      })
+      return false, {
+        reason = "package_register_failed",
+        detail = registerRes
+      }
+    end
+
+    table.insert(packedIds, job.packageId)
+  end
+
+  espUpdateOrder(order.orderId, "packed", {
+    packages = packedIds
+  })
+
+  return true, {
+    packages = packedIds
+  }
+end
+
+-- ==================================================
+-- MAIN LOOP
+-- ==================================================
+local function fetchPendingOrders()
+  local ok, res = espGetPendingOrders()
+  if not ok then
+    return false, res
+  end
+
+  if not res or res.ok == false or not res.data or type(res.data.orders) ~= "table" then
+    return false, res
+  end
+
+  return true, res.data.orders
+end
+
 local function main()
+  printHeader("MASTER V6 START")
+
   while true do
-    printHeader("MASTER POC V5")
+    local ok, orders = fetchPendingOrders()
 
-    local filter, address = buildFilterFromPrompt()
-
-    print("")
-    print("Input summary:")
-    dump(filter)
-    print("Address: " .. tostring(address))
-
-    local ok, result = packOnePackage(filter, address)
-    printResult(ok, result)
-
-    print("")
-    local again = prompt("Spustit další test? (y/n)", "y")
-    if lower(again) ~= "y" then
-      break
+    if not ok then
+      print("[ESP] pending fetch failed")
+      dump(orders)
+      sleep(CFG.idleSleep)
+    else
+      if #orders == 0 then
+        print("[MASTER] no pending orders")
+        sleep(CFG.idleSleep)
+      else
+        for _, order in ipairs(orders) do
+          local orderOk, orderRes = processOrder(order)
+          if not orderOk then
+            print("[MASTER] order failed")
+            dump(orderRes)
+          else
+            print("[MASTER] order packed OK")
+            dump(orderRes)
+          end
+        end
+      end
     end
   end
 end
