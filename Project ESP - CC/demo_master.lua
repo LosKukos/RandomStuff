@@ -9,7 +9,7 @@ local ME_BRIDGE = "right"                 -- peripheral name nebo side
 local PACKAGER = "left"                   -- peripheral name nebo side
 local BUFFER_INV = "minecraft:chest_0"    -- jméno buffer chestky
 local DEPOT = "back"                      -- peripheral name nebo side depotu
-local CLUTCH_REDSTONE_SIDE = "top"        -- redstone side pro clutch
+local CLUTCH_REDSTONE_SIDE = "back"        -- redstone side pro clutch
 
 -- jak dlouho čekat na jednotlivé kroky
 local EXPORT_TIMEOUT = 5
@@ -238,4 +238,72 @@ clutchRun()
 local gotPackage, depotItem = waitForDepotPackage(depot, PACKAGE_TIMEOUT)
 
 -- hned znovu stop, at ti to neujede do Narnie
-clutch
+clutchStop()
+
+if not gotPackage then
+  error("Balicek nedorazil na depot v casovem limitu")
+end
+
+print("[5/6] Balicek je na depotu")
+
+-- =========================
+-- 6) precti a zkontroluj
+-- =========================
+do
+  local pkg = depotItem.package
+  if not pkg then
+    error("Depot item nema package API")
+  end
+
+  local okAddr, depotAddress = safeCall(function()
+    return pkg:getAddress()
+  end)
+
+  if not okAddr then
+    error("pkg:getAddress() selhal: " .. tostring(depotAddress))
+  end
+
+  print("[6/6] Depot package address:", depotAddress)
+
+  local okList, contents = safeCall(function()
+    return pkg:list()
+  end)
+
+  if not okList then
+    print("pkg:list() selhalo:", tostring(contents))
+  else
+    print("Package contents:")
+    dump(contents)
+  end
+
+  local okOrder, orderData = safeCall(function()
+    return pkg:getOrderData()
+  end)
+
+  if okOrder then
+    print("Order data:")
+    dump(orderData)
+  else
+    print("pkg:getOrderData() selhalo nebo neni pouzitelne:", tostring(orderData))
+  end
+
+  if depotAddress ~= address then
+    error("Address mismatch na depotu. Ocekavano " .. tostring(address) .. ", prislo " .. tostring(depotAddress))
+  end
+
+  print("")
+  print("=== SUCCESS ===")
+  print("Balicek byl vytvoren a overen na depotu.")
+end
+
+print("")
+print("Chces-li ho pustit dal, stiskni ENTER.")
+read()
+
+clutchRun()
+sleep(0.5)
+clutchStop()
+
+waitForDepotEmpty(depot, 3)
+
+print("Hotovo.")
