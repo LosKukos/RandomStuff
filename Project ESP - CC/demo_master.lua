@@ -1,21 +1,24 @@
--- master_poc_v3.lua
--- Refactorovana verze PoC master logiky
+-- master_poc_v4.lua
+-- PoC master logiky bez manualniho ENTERu
 -- Bez partial pullu z ME
--- 1 balicek = 1 item type
--- Pouziva inspection depot a SR latch SET pulse pro arm release
+-- Automaticky ceka na:
+--   1) item se objevi v buffer chest
+--   2) item zmizi z buffer chest (Create ho vzal do packageru)
+-- Pak udela makePackage(), precte depot a pusti balicek dal
 
 -- ==================================================
 -- CONFIG
 -- ==================================================
 local CFG = {
-  meBridge = "right",                  -- peripheral name/side
-  packager = "left",                   -- peripheral name/side
-  bufferChest = "minecraft:chest_1",   -- jmeno buffer chest
-  depot = "back",                      -- peripheral name/side depotu
-  bridgeChestDirection = "up",         -- smer exportu z ME bridge do bridge chest
-  armSetRedstoneSide = "top",          -- SET vstup SR latch
+  meBridge = "me_bridge_0",                  -- peripheral name/side
+  packager = "Create_Packager_0",                   -- peripheral name/side
+  bufferChest = "minecraft:barrel_0",   -- jmeno buffer chest
+  depot = "create:depot_2",                      -- peripheral name/side depotu
+  bridgeChestDirection = "right",         -- smer exportu z ME bridge do bridge chest
+  armSetRedstoneSide = "back",          -- SET vstup SR latch
 
-  bufferTimeout = 10,
+  bufferAppearTimeout = 10,
+  bufferDrainTimeout = 15,
   depotTimeout = 10,
   depotClearTimeout = 5,
 
@@ -54,9 +57,9 @@ end
 
 local function printHeader(title)
   print("")
-  print(("="):rep(50))
+  print(("="):rep(52))
   print(title)
-  print(("="):rep(50))
+  print(("="):rep(52))
 end
 
 local function safeCall(fn, ...)
@@ -79,6 +82,10 @@ local function pulseSet(side, pulseLength)
   redstone.setOutput(side, true)
   sleep(pulseLength)
   redstone.setOutput(side, false)
+end
+
+local function lower(s)
+  return string.lower(tostring(s or ""))
 end
 
 -- ==================================================
@@ -186,12 +193,26 @@ local function getBufferCount(filter)
   return total
 end
 
-local function waitForBuffer(filter, wantedCount, timeoutSec)
+local function waitForBufferAtLeast(filter, wantedCount, timeoutSec)
   local deadline = os.clock() + timeoutSec
 
   while os.clock() < deadline do
     local count = getBufferCount(filter)
     if count >= wantedCount then
+      return true, count
+    end
+    sleep(CFG.poll)
+  end
+
+  return false, getBufferCount(filter)
+end
+
+local function waitForBufferDrain(filter, thresholdCount, timeoutSec)
+  local deadline = os.clock() + timeoutSec
+
+  while os.clock() < deadline do
+    local count = getBufferCount(filter)
+    if count <= thresholdCount then
       return true, count
     end
     sleep(CFG.poll)
@@ -363,17 +384,29 @@ local function precheckME(filter)
 end
 
 local function waitForCreateFeed(filter)
-  local ok, actual = waitForBuffer(filter, filter.count, CFG.bufferTimeout)
-  if not ok then
+  local okAppear, actualAppear = waitForBufferAtLeast(filter, filter.count, CFG.bufferAppearTimeout)
+  if not okAppear then
     return false, {
-      reason = "buffer_timeout",
-      actual = actual,
+      reason = "buffer_appear_timeout",
+      actual = actualAppear,
       expected = filter.count
     }
   end
 
+  -- Čekáme, až si Create chain item z bufferu vezme do packageru.
+  -- Pro PoC je threshold 0, protože balíme 1 item type na běh.
+  local okDrain, actualDrain = waitForBufferDrain(filter, 0, CFG.bufferDrainTimeout)
+  if not okDrain then
+    return false, {
+      reason = "buffer_drain_timeout",
+      actual = actualDrain,
+      expected = 0
+    }
+  end
+
   return true, {
-    actual = actual
+    appeared = actualAppear,
+    drainedTo = actualDrain
   }
 end
 
@@ -388,6 +421,7 @@ local function packOnePackage(filter, address)
     local ok, data = precheckME(filter)
     result.precheck = data
     if not ok then
+      result.reason = data
       return false, result
     end
   end
@@ -407,26 +441,22 @@ local function packOnePackage(filter, address)
     local ok, data = exportIfEnough(filter)
     result.export = data
     if not ok then
+      result.reason = data
       return false, result
     end
   end
 
-  -- 4) wait buffer
+  -- 4) wait for buffer appear + drain
   do
     local ok, data = waitForCreateFeed(filter)
     result.buffer = data
     if not ok then
+      result.reason = data
       return false, result
     end
   end
 
-  -- 5) wait for user confirmation that Create chain is ready
-  print("")
-  print("[INFO] Nech Create chain presunout item do packageru.")
-  print("       Az bude ready k zabalení, stiskni ENTER.")
-  read()
-
-  -- 6) make package
+  -- 5) make package
   do
     local ok, data = makePackage()
     result.makePackage = data
@@ -436,7 +466,7 @@ local function packOnePackage(filter, address)
     end
   end
 
-  -- 7) inspect on depot
+  -- 6) inspect on depot
   do
     local ok, data = readDepotPackage(address)
     result.depot = data
@@ -446,7 +476,7 @@ local function packOnePackage(filter, address)
     end
   end
 
-  -- 8) release via SR latch
+  -- 7) release via SR latch
   do
     local ok, data = releaseFromDepot()
     result.release = data or true
@@ -460,8 +490,33 @@ local function packOnePackage(filter, address)
 end
 
 -- ==================================================
--- UI / MAIN LOOP
+-- RESULT PRINTING
 -- ==================================================
+local function printReason(result)
+  local reason = result.reason
+
+  if not reason and type(result.precheck) == "table" and result.precheck.reason then
+    reason = result.precheck
+  elseif not reason and type(result.export) == "table" and result.export.reason then
+    reason = result.export
+  elseif not reason and type(result.buffer) == "table" and result.buffer.reason then
+    reason = result.buffer
+  elseif not reason and type(result.depot) == "table" and result.depot.reason then
+    reason = result.depot
+  elseif not reason and type(result.release) == "table" and result.release.reason then
+    reason = result.release
+  end
+
+  print("Reason:")
+  if reason == nil then
+    print("unknown")
+  elseif type(reason) == "table" then
+    dump(reason)
+  else
+    print(tostring(reason))
+  end
+end
+
 local function printResult(ok, result)
   printHeader(ok and "SUCCESS" or "FAIL")
 
@@ -493,14 +548,16 @@ local function printResult(ok, result)
   end
 
   if not ok then
-    print("Reason:")
-    print(tostring(result.reason or "unknown"))
+    printReason(result)
   end
 end
 
+-- ==================================================
+-- UI / MAIN LOOP
+-- ==================================================
 local function main()
   while true do
-    printHeader("MASTER POC V3")
+    printHeader("MASTER POC V4")
 
     local filter, address = buildFilterFromPrompt()
 
