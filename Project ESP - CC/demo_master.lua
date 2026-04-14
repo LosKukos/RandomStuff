@@ -1,10 +1,9 @@
--- master_poc_v4.lua
+-- master_poc_v5.lua
 -- PoC master logiky bez manualniho ENTERu
 -- Bez partial pullu z ME
--- Automaticky ceka na:
---   1) item se objevi v buffer chest
---   2) item zmizi z buffer chest (Create ho vzal do packageru)
--- Pak udela makePackage(), precte depot a pusti balicek dal
+-- Spravny flow:
+--   export -> cekani na item v buffer chest -> kratke ustaleni -> makePackage()
+--   -> cteni na depotu -> SET pulse do SR latch
 
 -- ==================================================
 -- CONFIG
@@ -18,9 +17,11 @@ local CFG = {
   armSetRedstoneSide = "back",          -- SET vstup SR latch
 
   bufferAppearTimeout = 10,
-  bufferDrainTimeout = 15,
   depotTimeout = 10,
   depotClearTimeout = 5,
+
+  -- malá prodleva po detekci itemu v bufferu, ať se Create chain ustálí
+  settleDelay = 0.5,
 
   setPulse = 0.15,
   poll = 0.1,
@@ -207,20 +208,6 @@ local function waitForBufferAtLeast(filter, wantedCount, timeoutSec)
   return false, getBufferCount(filter)
 end
 
-local function waitForBufferDrain(filter, thresholdCount, timeoutSec)
-  local deadline = os.clock() + timeoutSec
-
-  while os.clock() < deadline do
-    local count = getBufferCount(filter)
-    if count <= thresholdCount then
-      return true, count
-    end
-    sleep(CFG.poll)
-  end
-
-  return false, getBufferCount(filter)
-end
-
 local function waitForDepotPackage(timeoutSec)
   local deadline = os.clock() + timeoutSec
 
@@ -393,20 +380,11 @@ local function waitForCreateFeed(filter)
     }
   end
 
-  -- Čekáme, až si Create chain item z bufferu vezme do packageru.
-  -- Pro PoC je threshold 0, protože balíme 1 item type na běh.
-  local okDrain, actualDrain = waitForBufferDrain(filter, 0, CFG.bufferDrainTimeout)
-  if not okDrain then
-    return false, {
-      reason = "buffer_drain_timeout",
-      actual = actualDrain,
-      expected = 0
-    }
-  end
+  sleep(CFG.settleDelay)
 
   return true, {
     appeared = actualAppear,
-    drainedTo = actualDrain
+    settled = true
   }
 end
 
@@ -446,7 +424,7 @@ local function packOnePackage(filter, address)
     end
   end
 
-  -- 4) wait for buffer appear + drain
+  -- 4) wait for buffer appear + settle
   do
     local ok, data = waitForCreateFeed(filter)
     result.buffer = data
@@ -557,7 +535,7 @@ end
 -- ==================================================
 local function main()
   while true do
-    printHeader("MASTER POC V4")
+    printHeader("MASTER POC V5")
 
     local filter, address = buildFilterFromPrompt()
 
