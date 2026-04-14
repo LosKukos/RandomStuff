@@ -1,61 +1,119 @@
 local ESP_IP = "10.0.1.17"
+local BRIDGE_NAME = "me_bridge_0"
+local SYNC_INTERVAL = 5
+local LIMIT = 10000
+
 local ESP_BASE = "http://" .. ESP_IP
 local WS_URL = "ws://" .. ESP_IP .. "/ws"
-local BRIDGE_SIDE = "right"   -- uprav podle reality
-local SYNC_INTERVAL = 10      -- sekundy
-local LIMIT = 10000             -- max itemů do snapshotu
 
-local ae = peripheral.wrap(BRIDGE_SIDE)
+local ae = peripheral.wrap(BRIDGE_NAME)
 if not ae then
-  error("AE bridge not found on " .. BRIDGE_SIDE)
+  error("AE bridge not found: " .. BRIDGE_NAME)
 end
 
 local lastJson = nil
 
 -- =========================
--- HTTP helper
+-- Helpers
 -- =========================
+local function log(...)
+  local parts = {}
+  for i = 1, select("#", ...) do
+    parts[#parts + 1] = tostring(select(i, ...))
+  end
+  print(table.concat(parts, " "))
+end
+
 local function postJson(path, tbl)
+  local body = textutils.serialiseJSON(tbl)
+
   local res, err = http.post(
     ESP_BASE .. path,
-    textutils.serialiseJSON(tbl),
+    body,
     { ["Content-Type"] = "application/json" }
   )
 
   if not res then
-    print("POST failed:", path, err)
+    log("POST failed:", path, err)
     return false, err
   end
 
-  local body = res.readAll()
+  local txt = res.readAll()
   res.close()
-  return true, body
+  return true, txt
+end
+
+local function isEmptyTable(t)
+  return t == nil or next(t) == nil
+end
+
+local function normaliseItem(item)
+  return {
+    name = item.name,
+    displayName = item.displayName or item.name,
+    count = item.count or 0,
+    hasPattern = false,
+    maxStackSize = item.maxStackSize or 64
+  }
+end
+
+local function normaliseMissingItem(item)
+  return {
+    name = item.name or "unknown",
+    displayName = item.displayName or item.name or "Unknown",
+    count = item.count or 0
+  }
 end
 
 -- =========================
--- Build storage snapshot
+-- Build merged snapshot
 -- =========================
 local function buildSnapshot()
-  local items = ae.getItems()
-  local out = { items = {} }
+  local stored = ae.getItems()
+  local craftable = ae.getCraftableItems()
 
-  local n = 0
-  for _, item in ipairs(items) do
-    if n >= LIMIT then break end
+  local map = {}
 
-    local count = item.count or 0
-    local craftable = item.isCraftable or false
+  -- stored items
+  for _, item in ipairs(stored) do
+    local key = item.name
+    map[key] = normaliseItem(item)
+  end
 
-    if count > 0 or craftable then
-      table.insert(out.items, {
+  -- craftable items
+  for _, item in ipairs(craftable) do
+    local key = item.name
+
+    if map[key] then
+      map[key].hasPattern = true
+    else
+      map[key] = {
         name = item.name,
         displayName = item.displayName or item.name,
-        count = count,
-        isCraftable = craftable,
+        count = 0,
+        hasPattern = true,
         maxStackSize = item.maxStackSize or 64
-      })
-      n = n + 1
+      }
     end
+  end
+
+  local out = { items = {} }
+
+  for _, item in pairs(map) do
+    table.insert(out.items, item)
+  end
+
+  table.sort(out.items, function(a, b)
+    return string.lower(a.displayName or a.name) < string.lower(b.displayName or b.name)
+  end)
+
+  -- hard limit, ať nesežereme ESP/browser
+  if #out.items > LIMIT then
+    local trimmed = { items = {} }
+    for i = 1, LIMIT do
+      trimmed.items[i] = out.items[i]
+    end
+    return trimmed
   end
 
   return out
@@ -69,20 +127,20 @@ local function syncLoop()
     local ok, snapshot = pcall(buildSnapshot)
 
     if not ok then
-      print("Snapshot build failed:", snapshot)
+      log("Snapshot build failed:", snapshot)
     else
       local json = textutils.serialiseJSON(snapshot)
 
       if json ~= lastJson then
-        print("Storage changed, syncing...")
+        log("Storage changed, syncing...")
         local pushed, body = postJson("/api/me/list", snapshot)
 
         if pushed then
           lastJson = json
-          print("Sync OK:", body)
+          log("Sync OK:", body)
         end
       else
-        print("No storage changes")
+        log("No storage changes")
       end
     end
 
@@ -91,7 +149,7 @@ local function syncLoop()
 end
 
 -- =========================
--- ACK / RESULT helpers
+-- Command result helpers
 -- =========================
 local function ackCommand(id)
   return postJson("/api/ack", {
@@ -99,100 +157,190 @@ local function ackCommand(id)
   })
 end
 
-local function finishCommand(id, status, reason)
-  local payload = {
-    id = id,
-    status = status
-  }
+local function finishCommand(payload)
+  return postJson("/api/result", payload)
+end
 
-  if reason then
-    payload.reason = reason
+-- =========================
+-- Craft inspection
+-- =========================
+local function inspectCraftTask(task, requestedCount)
+  -- krátké čekání, aby planner stihl dopočítat stav
+  sleep(0.5)
+
+  local hasErr = task.hasErrorOccurred and task.hasErrorOccurred() or false
+  local calcFail = task.isCalculationNotSuccessful and task.isCalculationNotSuccessful() or false
+  local debugMsg = task.getDebugMessage and task.getDebugMessage() or nil
+  local output = task.getFinalOutput and task.getFinalOutput() or nil
+  local missing = task.getMissingItems and task.getMissingItems() or nil
+
+  if hasErr or calcFail then
+    return {
+      status = "failed",
+      requested = requestedCount,
+      accepted = 0,
+      reason = debugMsg or "calculation_failed",
+      missing = {}
+    }
   end
 
-  return postJson("/api/result", payload)
+  local missingList = {}
+  if type(missing) == "table" then
+    for _, item in ipairs(missing) do
+      table.insert(missingList, normaliseMissingItem(item))
+    end
+  end
+
+  local outputCount = 0
+  if type(output) == "table" then
+    outputCount = output.count or 0
+  end
+
+  -- full success
+  if output ~= nil and isEmptyTable(missing) then
+    return {
+      status = "done",
+      requested = requestedCount,
+      accepted = outputCount > 0 and outputCount or requestedCount,
+      reason = nil,
+      missing = {}
+    }
+  end
+
+  -- partial / missing materials
+  if output ~= nil and not isEmptyTable(missing) then
+    return {
+      status = "partial",
+      requested = requestedCount,
+      accepted = outputCount,
+      reason = "missing_items",
+      missing = missingList
+    }
+  end
+
+  -- no usable output
+  return {
+    status = "failed",
+    requested = requestedCount,
+    accepted = 0,
+    reason = debugMsg or "no_output",
+    missing = missingList
+  }
 end
 
 -- =========================
 -- Craft execution
 -- =========================
 local function performCraft(itemName, count)
-  -- Jednoduchá varianta.
-  -- Pokud bude třeba, později doplníme crafting CPU kontrolu.
-  return ae.craftItem({
-    name = itemName,
-    count = count
-  })
+  local ok, task = pcall(function()
+    return ae.craftItem({
+      name = itemName,
+      count = count
+    })
+  end)
+
+  if not ok then
+    return {
+      status = "failed",
+      requested = count,
+      accepted = 0,
+      reason = tostring(task),
+      missing = {}
+    }
+  end
+
+  if not task then
+    return {
+      status = "failed",
+      requested = count,
+      accepted = 0,
+      reason = "craft_task_nil",
+      missing = {}
+    }
+  end
+
+  return inspectCraftTask(task, count)
 end
 
+-- =========================
+-- Handle craft command
+-- =========================
 local function handleCraftCommand(cmd)
   local payload = cmd.payload or {}
   local item = payload.item
   local count = tonumber(payload.count) or 1
 
   if not item then
-    finishCommand(cmd.id, "failed", "missing_item")
+    finishCommand({
+      id = cmd.id,
+      status = "failed",
+      requested = count,
+      accepted = 0,
+      reason = "missing_item",
+      missing = {}
+    })
     return
   end
 
-  -- Ověření craftability přímo proti snapshotu bridge
-  local items = ae.getItems()
-  local craftable = false
+  -- ověření, že na item existuje pattern
+  local hasPattern = false
+  local craftable = ae.getCraftableItems()
 
-  for _, it in ipairs(items) do
+  for _, it in ipairs(craftable) do
     if it.name == item then
-      craftable = it.isCraftable or false
+      hasPattern = true
       break
     end
   end
 
-  if not craftable then
-    finishCommand(cmd.id, "failed", "not_craftable")
+  if not hasPattern then
+    finishCommand({
+      id = cmd.id,
+      status = "failed",
+      requested = count,
+      accepted = 0,
+      reason = "no_pattern",
+      missing = {}
+    })
     return
   end
 
   local okAck = ackCommand(cmd.id)
   if not okAck then
-    print("ACK failed for", cmd.id)
+    log("ACK failed for", cmd.id)
   end
 
-  local ok, result = pcall(function()
-    return performCraft(item, count)
-  end)
+  local result = performCraft(item, count)
+  result.id = cmd.id
 
-  if ok and result then
-    finishCommand(cmd.id, "done")
-  elseif ok and not result then
-    finishCommand(cmd.id, "failed", "craft_returned_false")
-  else
-    finishCommand(cmd.id, "failed", tostring(result))
-  end
+  finishCommand(result)
 end
 
 -- =========================
--- WS listener loop
+-- Websocket listener loop
 -- =========================
 local function commandLoop()
   while true do
-    print("Connecting WS...")
+    log("Connecting WS...")
     local ws, err = http.websocket(WS_URL)
 
     if not ws then
-      print("WS connect failed:", err)
+      log("WS connect failed:", err)
       sleep(3)
     else
-      print("WS connected")
+      log("WS connected")
 
       while true do
         local msg = ws.receive()
         if not msg then
-          print("WS disconnected")
+          log("WS disconnected")
           break
         end
 
         local ok, data = pcall(textutils.unserialiseJSON, msg)
 
         if not ok or not data then
-          print("Invalid WS JSON:", msg)
+          log("Invalid WS JSON:", msg)
         else
           if data.event == "command" and data.type == "craft" then
             handleCraftCommand(data)
