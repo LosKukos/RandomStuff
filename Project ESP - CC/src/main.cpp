@@ -30,7 +30,7 @@ std::vector<String> logs;
 void addLog(const String& msg) {
   Serial.println(msg);
   logs.push_back(msg);
-  if (logs.size() > 80) {
+  if (logs.size() > 100) {
     logs.erase(logs.begin());
   }
 }
@@ -40,7 +40,7 @@ struct Command {
   String id;
   String type;
   String payload;   // serialized JSON payload
-  String status;    // queued, sent, accepted, done, failed, timeout
+  String status;    // queued, sent, accepted, done, failed, partial, timeout
   uint32_t created;
   uint32_t updated;
 };
@@ -79,7 +79,7 @@ Command* findCommandById(const String& id) {
 
 // ===================== JSON RESPONSE HELPERS =====================
 String makeOkResponse(std::function<void(JsonObject)> fill) {
-  StaticJsonDocument<768> doc;
+  StaticJsonDocument<1024> doc;
   doc["ok"] = true;
   JsonObject data = doc.createNestedObject("data");
   fill(data);
@@ -149,11 +149,11 @@ void loadConfig() {
 }
 
 void saveQueue() {
-  StaticJsonDocument<8192> doc;
+  StaticJsonDocument<12288> doc;
   JsonArray arr = doc.to<JsonArray>();
 
   for (const auto& cmd : commandQueue) {
-    if (cmd.status == "done" || cmd.status == "failed" || cmd.status == "timeout") {
+    if (cmd.status == "done" || cmd.status == "failed" || cmd.status == "partial" || cmd.status == "timeout") {
       continue;
     }
 
@@ -196,7 +196,7 @@ void loadQueue() {
     return;
   }
 
-  StaticJsonDocument<8192> doc;
+  StaticJsonDocument<12288> doc;
   DeserializationError err = deserializeJson(doc, f);
   f.close();
 
@@ -259,12 +259,12 @@ void loadME() {
 
 // ===================== COMMAND EMIT =====================
 void emitCommandWS(const Command& cmd) {
-  StaticJsonDocument<512> doc;
+  StaticJsonDocument<1024> doc;
   doc["event"] = "command";
   doc["id"] = cmd.id;
   doc["type"] = cmd.type;
 
-  StaticJsonDocument<256> payloadDoc;
+  StaticJsonDocument<512> payloadDoc;
   DeserializationError err = deserializeJson(payloadDoc, cmd.payload);
   if (!err) {
     doc["payload"] = payloadDoc.as<JsonVariantConst>();
@@ -368,10 +368,11 @@ void setupWeb() {
     req->send(500, "application/json", makeErrorResponse("unknown_interface"));
   });
 
-  // ---------- STATIC CSS ----------
+  // ---------- STATIC ----------
   server.serveStatic("/css/", LittleFS, "/css/");
+  server.serveStatic("/js/", LittleFS, "/js/");
 
-  // ---------- AP: SAVE CONFIG ----------
+  // ---------- AP: CONFIG ----------
   server.on("/api/config", HTTP_POST,
     [](AsyncWebServerRequest* req) {},
     nullptr,
@@ -439,7 +440,7 @@ void setupWeb() {
       return;
     }
 
-    StaticJsonDocument<4096> doc;
+    StaticJsonDocument<6144> doc;
     doc["ok"] = true;
     JsonArray arr = doc.createNestedArray("data");
 
@@ -483,7 +484,7 @@ void setupWeb() {
       body.reserve(len);
       for (size_t i = 0; i < len; i++) body += (char)data[i];
 
-      StaticJsonDocument<512> doc;
+      StaticJsonDocument<768> doc;
       DeserializationError err = deserializeJson(doc, body);
       if (err) {
         req->send(400, "application/json", makeErrorResponse("invalid_json"));
@@ -575,7 +576,7 @@ void setupWeb() {
       body.reserve(len);
       for (size_t i = 0; i < len; i++) body += (char)data[i];
 
-      StaticJsonDocument<256> doc;
+      StaticJsonDocument<4096> doc;
       DeserializationError err = deserializeJson(doc, body);
       if (err) {
         req->send(400, "application/json", makeErrorResponse("invalid_json"));
@@ -600,23 +601,42 @@ void setupWeb() {
       cmd->updated = millis();
       queueDirty = true;
 
-      StaticJsonDocument<256> evt;
+      StaticJsonDocument<4096> evt;
       evt["event"] = "command_result";
       evt["id"] = id;
       evt["status"] = status;
+
+      if (doc.containsKey("requested")) evt["requested"] = doc["requested"];
+      if (doc.containsKey("accepted")) evt["accepted"] = doc["accepted"];
+      if (doc.containsKey("reason")) evt["reason"] = doc["reason"];
+
+      if (doc.containsKey("missing") && doc["missing"].is<JsonArrayConst>()) {
+        JsonArray dst = evt.createNestedArray("missing");
+        for (JsonObjectConst srcItem : doc["missing"].as<JsonArrayConst>()) {
+          JsonObject d = dst.createNestedObject();
+          d["name"] = srcItem["name"] | "";
+          d["displayName"] = srcItem["displayName"] | "";
+          d["count"] = srcItem["count"] | 0;
+        }
+      }
 
       String out;
       serializeJson(evt, out);
       ws.textAll(out);
 
-      req->send(200, "application/json", makeOkResponse([&id, &status](JsonObject data) {
+      req->send(200, "application/json", makeOkResponse([&](JsonObject data) {
         data["id"] = id;
         data["status"] = status;
+        if (doc.containsKey("requested")) data["requested"] = doc["requested"];
+        if (doc.containsKey("accepted")) data["accepted"] = doc["accepted"];
+        if (doc.containsKey("reason")) data["reason"] = doc["reason"];
       }));
+
+      addLog("[CMD] result " + id + " -> " + status);
     }
   );
 
-  // ---------- STA: ME LIST UPDATE FROM CC ----------
+  // ---------- STA: ME UPDATE FROM CC ----------
   server.on("/api/me/list", HTTP_POST,
     [](AsyncWebServerRequest* req) {},
     nullptr,
@@ -644,7 +664,7 @@ void setupWeb() {
     }
   );
 
-  // ---------- STA: ME LIST READ FOR UI ----------
+  // ---------- STA: ME READ FOR UI ----------
   server.on("/api/me/list", HTTP_GET, [](AsyncWebServerRequest* req) {
     if (!isSTA(req)) {
       req->send(403, "application/json", makeErrorResponse("sta_only"));
@@ -685,7 +705,6 @@ void commandTask(void* pvParameters) {
   for (;;) {
     uint32_t now = millis();
 
-    // queued -> sent
     for (auto& cmd : commandQueue) {
       if (cmd.status == "queued") {
         cmd.status = "sent";
@@ -693,7 +712,7 @@ void commandTask(void* pvParameters) {
         queueDirty = true;
       }
 
-      if (cmd.status == "sent" && (now - cmd.updated > 5000)) {
+      if (cmd.status == "sent" && (now - cmd.updated > 10000)) {
         cmd.status = "timeout";
         cmd.updated = now;
         queueDirty = true;
@@ -701,23 +720,25 @@ void commandTask(void* pvParameters) {
       }
     }
 
-    // cleanup old finished commands
     commandQueue.erase(
       std::remove_if(commandQueue.begin(), commandQueue.end(),
         [now](const Command& cmd) {
-          bool finished = (cmd.status == "done" || cmd.status == "failed" || cmd.status == "timeout");
+          bool finished = (
+            cmd.status == "done" ||
+            cmd.status == "failed" ||
+            cmd.status == "partial" ||
+            cmd.status == "timeout"
+          );
           return finished && (now - cmd.updated > 60000);
         }),
       commandQueue.end()
     );
 
-    // delayed queue save
     if (queueDirty && (now - lastQueueSave > 2000)) {
       saveQueue();
       lastQueueSave = now;
     }
 
-    // delayed ME save
     if (meDirty && (now - lastMeSave > 5000)) {
       saveME();
       lastMeSave = now;

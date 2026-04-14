@@ -325,3 +325,178 @@ section {
   letter-spacing: 1px;
   text-align: center;
 }
+
+/* ===== AXIS EXTENSIONS: INPUTS / MODALS / POPUPS ===== */
+
+/* inputs sladěné s AXIS lookem */
+input[type="number"],
+input[type="text"],
+input[type="search"] {
+  background: rgba(255, 255, 255, 0.03);
+  color: white;
+  border: 1px solid var(--border-soft);
+  padding: 10px 12px;
+  font-family: "DM Mono", monospace;
+  transition: var(--transition);
+}
+
+input[type="number"]::placeholder,
+input[type="text"]::placeholder,
+input[type="search"]::placeholder {
+  color: rgba(255,255,255,0.35);
+}
+
+input[type="number"]:focus,
+input[type="text"]:focus,
+input[type="search"]:focus {
+  border-color: var(--accent);
+  background: rgba(46,255,181,0.04);
+  box-shadow:
+    0 0 0 1px rgba(46,255,181,0.18),
+    0 0 14px rgba(46,255,181,0.10);
+}
+
+.craft-input {
+  width: 88px;
+  text-align: center;
+  letter-spacing: 0.04em;
+}
+
+/* toolbar v modalu */
+.storage-toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.storage-toolbar input {
+  min-width: 260px;
+}
+
+.muted-text {
+  opacity: 0.75;
+  font-size: 0.92rem;
+}
+
+.status-pill {
+  display: inline-block;
+  padding: 4px 10px;
+  border: 1px solid rgba(46,255,181,0.25);
+  margin-top: 6px;
+  font-size: 0.82rem;
+  opacity: 0.9;
+  box-shadow: 0 0 8px rgba(46,255,181,0.05);
+}
+
+/* modal backdrop */
+.modal-backdrop,
+.popup-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.78);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  padding: 16px;
+}
+
+.modal-backdrop.open,
+.popup-backdrop.open {
+  display: flex;
+}
+
+/* AXIS panel styling */
+.modal-panel,
+.popup-panel {
+  background: #050505;
+  border: 1px solid var(--border-soft);
+  box-shadow:
+    0 0 30px rgba(46,255,181,0.08),
+    inset 0 0 20px rgba(255,255,255,0.015);
+  padding: 18px;
+}
+
+/* velikosti panelů odděleně */
+.modal-panel {
+  width: min(1100px, 100%);
+  max-height: 88vh;
+  overflow: auto;
+}
+
+.popup-panel {
+  width: min(680px, 100%);
+}
+
+/* popup variants, ale pořád v AXIS stylu */
+.popup-panel.success {
+  border-color: rgba(46,255,120,0.45);
+  box-shadow:
+    0 0 30px rgba(46,255,120,0.12),
+    inset 0 0 20px rgba(255,255,255,0.015);
+}
+
+.popup-panel.warn {
+  border-color: rgba(255,180,0,0.45);
+  box-shadow:
+    0 0 30px rgba(255,180,0,0.10),
+    inset 0 0 20px rgba(255,255,255,0.015);
+}
+
+.popup-panel.error {
+  border-color: rgba(255,70,70,0.45);
+  box-shadow:
+    0 0 30px rgba(255,70,70,0.10),
+    inset 0 0 20px rgba(255,255,255,0.015);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.modal-close {
+  cursor: pointer;
+}
+
+.popup-title {
+  margin: 0 0 10px 0;
+}
+
+.popup-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+
+.missing-list {
+  margin-top: 12px;
+  padding-left: 18px;
+}
+
+.missing-list li {
+  margin-bottom: 6px;
+  color: #ffb0b0;
+}
+
+/* scrollbar, ať modal nevypadá jak Windows XP trauma */
+.modal-panel::-webkit-scrollbar,
+.popup-panel::-webkit-scrollbar {
+  width: 6px;
+}
+
+.modal-panel::-webkit-scrollbar-thumb,
+.popup-panel::-webkit-scrollbar-thumb {
+  background: rgba(46,255,181,0.25);
+}
+
+.modal-panel::-webkit-scrollbar-thumb:hover,
+.popup-panel::-webkit-scrollbar-thumb:hover {
+  background: rgba(46,255,181,0.45);
+}

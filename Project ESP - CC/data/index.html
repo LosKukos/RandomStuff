@@ -4,87 +4,6 @@
 <meta charset="utf-8">
 <title>AXIS Control</title>
 <link rel="stylesheet" href="/css/demo.css">
-<style>
-  .modal-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.84);
-    display: none;
-    align-items: center;
-    justify-content: center;
-    z-index: 9999;
-    padding: 16px;
-  }
-
-  .modal-backdrop.open {
-    display: flex;
-  }
-
-  .modal-panel {
-    width: min(1100px, 100%);
-    max-height: 88vh;
-    overflow: auto;
-    background: #050505;
-    border: 1px solid rgba(0, 255, 200, 0.22);
-    box-shadow: 0 0 30px rgba(0, 255, 200, 0.08);
-    padding: 18px;
-  }
-
-  .modal-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 14px;
-  }
-
-  .modal-close {
-    cursor: pointer;
-  }
-
-  .storage-toolbar {
-    display: flex;
-    gap: 12px;
-    align-items: center;
-    margin-bottom: 16px;
-    flex-wrap: wrap;
-  }
-
-  .storage-toolbar input {
-    min-width: 260px;
-  }
-
-  .muted-text {
-    opacity: 0.75;
-    font-size: 0.92rem;
-  }
-
-  .item-meta {
-    margin-top: 8px;
-    opacity: 0.8;
-    font-size: 0.92rem;
-  }
-
-  .item-actions {
-    margin-top: 12px;
-    display: flex;
-    gap: 10px;
-    flex-wrap: wrap;
-    align-items: center;
-  }
-
-  .item-actions input {
-    max-width: 110px;
-  }
-
-  .tag-ok {
-    color: #6dffcf;
-  }
-
-  .tag-off {
-    opacity: 0.7;
-  }
-</style>
 </head>
 <body>
 
@@ -109,9 +28,9 @@
 
 <section class="hero" id="hero">
   <div class="container">
-    <h1>Secure Access Interface</h1>
+    <h1>Secure Control Interface</h1>
     <p id="hero-text">
-      Establishing secure link to system modules.
+      Establishing secure link to storage, power and auxiliary systems.
     </p>
     <button class="axis-btn" id="control-btn">Open Control</button>
   </div>
@@ -124,23 +43,26 @@
       <div class="card" id="card-me">
         <h3>ME System</h3>
         <p id="me-summary">Storage cache unavailable.</p>
+        <div class="status-pill" id="me-status-pill">No data</div>
+        <br><br>
         <button class="axis-btn" id="open-storage-btn">Open Storage</button>
       </div>
 
       <div class="card" id="card-power">
         <h3>Power Grid</h3>
-        <p id="power-summary">Telemetry pending integration.</p>
+        <p id="power-summary">No telemetry available.</p>
       </div>
 
-      <div class="card" id="card-temp">
-        <h3>Temporary Free</h3>
-        <p id="temp-summary">Reserved slot for future module deployment.</p>
+      <div class="card" id="card-aux">
+        <h3>Open Control</h3>
+        <p id="aux-summary">Temporary free slot ready for next module.</p>
       </div>
 
     </div>
   </div>
 </section>
 
+<!-- STORAGE MODAL -->
 <div class="modal-backdrop" id="storage-modal">
   <div class="modal-panel">
     <div class="modal-header">
@@ -152,11 +74,23 @@
     </div>
 
     <div class="storage-toolbar">
-      <input id="search" placeholder="Search item...">
+      <input id="search" type="search" placeholder="Search item...">
       <span class="muted-text" id="storage-count">0 visible items</span>
     </div>
 
     <div class="card-grid" id="items"></div>
+  </div>
+</div>
+
+<!-- RESULT POPUP -->
+<div class="popup-backdrop" id="result-popup">
+  <div class="popup-panel" id="result-popup-panel">
+    <h2 class="popup-title" id="result-title">Result</h2>
+    <p id="result-text">No message.</p>
+    <ul class="missing-list" id="missing-list"></ul>
+    <div class="popup-actions">
+      <button class="axis-btn" id="popup-close-btn">Close</button>
+    </div>
   </div>
 </div>
 
@@ -168,7 +102,7 @@
 let storage = [];
 let ws = null;
 
-// ===== LOAD STATUS =====
+// ===== STATUS =====
 async function loadStatus() {
   try {
     const res = await fetch('/api/status');
@@ -220,27 +154,42 @@ async function loadME() {
   }
 }
 
-// ===== SUMMARY CARDS =====
+// ===== CARD SUMMARIES =====
 function updateSummaries() {
   const totalTypes = storage.length;
   const totalItems = storage.reduce((sum, item) => sum + (Number(item.count) || 0), 0);
-  const craftableCount = storage.filter(item => !!item.isCraftable).length;
+  const patternCount = storage.filter(i => !!i.hasPattern).length;
 
   document.getElementById("me-summary").textContent =
     totalTypes > 0
-      ? `${totalTypes} item types tracked | ${craftableCount} craftable | Total units: ${totalItems}`
+      ? `${totalTypes} item types tracked | Total units: ${totalItems}`
       : "Storage cache unavailable.";
 
-  document.getElementById("power-summary").textContent =
-    "Telemetry pending integration.";
+  document.getElementById("me-status-pill").textContent =
+    totalTypes > 0
+      ? `${patternCount} pattern-backed items`
+      : "No data";
 
-  document.getElementById("temp-summary").textContent =
-    "Reserved slot for future module deployment.";
+  document.getElementById("power-summary").textContent =
+    "Grid telemetry pending integration.";
+
+  document.getElementById("aux-summary").textContent =
+    "Temporary free slot ready for next module.";
 
   document.getElementById("storage-meta").textContent =
     totalTypes > 0
-      ? `${totalTypes} item types | ${craftableCount} craftable | Total units: ${totalItems}`
+      ? `${totalTypes} item types | Total units: ${totalItems}`
       : "No storage data loaded.";
+}
+
+// ===== ITEM STATUS TEXT =====
+function getItemStatus(item) {
+  const count = Number(item.count || 0);
+  const hasPattern = !!item.hasPattern;
+
+  if (count > 0) return "In stock";
+  if (hasPattern) return "Pattern available";
+  return "Unavailable";
 }
 
 // ===== RENDER STORAGE =====
@@ -254,37 +203,23 @@ function render(items) {
   visible.forEach(item => {
     const safeId = String(item.name).replace(/[^a-zA-Z0-9_-]/g, "_");
     const displayName = item.displayName || item.name;
-    const craftable = !!item.isCraftable;
-    const count = Number(item.count) || 0;
+    const hasPattern = !!item.hasPattern;
+    const statusText = getItemStatus(item);
 
-    let availability = "Unavailable";
-    if (count > 0) {
-      availability = "In stock";
-    } else if (craftable) {
-      availability = "Craft on demand";
-    }
-
-    const actionHtml = craftable
+    const actionHtml = hasPattern
       ? `
-        <div class="item-actions">
-          <input type="number" value="1" min="1" id="c_${safeId}">
-          <button class="axis-btn" onclick="craft('${encodeURIComponent(item.name)}', '${safeId}')">Craft</button>
-        </div>
+        <input class="craft-input" type="number" value="1" min="1" id="c_${safeId}">
+        <button class="axis-btn" onclick="craft('${encodeURIComponent(item.name)}', '${safeId}')">Craft</button>
       `
-      : `
-        <div class="item-actions">
-          <span class="muted-text">Not craftable</span>
-        </div>
-      `;
+      : `<p class="muted-text">No pattern available</p>`;
 
     const div = document.createElement("div");
     div.className = "card";
 
     div.innerHTML = `
       <h3>${displayName}</h3>
-      <p>Stored: ${count}</p>
-      <div class="item-meta">Status: <span class="${craftable ? 'tag-ok' : 'tag-off'}">${availability}</span></div>
-      <div class="item-meta">Internal: ${item.name}</div>
+      <p>Stored: ${item.count}</p>
+      <p>Status: ${statusText}</p>
       ${actionHtml}
     `;
 
@@ -304,7 +239,7 @@ document.getElementById("search").addEventListener("input", (e) => {
   render(filtered);
 });
 
-// ===== CRAFT =====
+// ===== SEND CRAFT COMMAND =====
 async function craft(encodedName, safeId) {
   const name = decodeURIComponent(encodedName);
   const countEl = document.getElementById("c_" + safeId);
@@ -324,13 +259,69 @@ async function craft(encodedName, safeId) {
     });
 
     const data = await res.json();
-    console.log("Craft response:", data);
+    console.log("Craft request response:", data);
+
+    if (!data.ok) {
+      showResultPopup({
+        title: "Command Error",
+        text: "Failed to queue craft command.",
+        mode: "error",
+        missing: []
+      });
+      return;
+    }
+
+    showResultPopup({
+      title: "Craft Request Sent",
+      text: `Requested ${count}x ${name}. Waiting for AE response...`,
+      mode: "warn",
+      missing: []
+    });
+
   } catch (e) {
     console.error("Craft failed:", e);
+    showResultPopup({
+      title: "Network Error",
+      text: "Could not send craft request.",
+      mode: "error",
+      missing: []
+    });
   }
 }
 
-// ===== MODAL =====
+// ===== RESULT POPUP =====
+function showResultPopup({ title, text, mode = "warn", missing = [] }) {
+  const popup = document.getElementById("result-popup");
+  const panel = document.getElementById("result-popup-panel");
+  const titleEl = document.getElementById("result-title");
+  const textEl = document.getElementById("result-text");
+  const missingList = document.getElementById("missing-list");
+
+  panel.classList.remove("success", "warn", "error");
+  panel.classList.add(mode);
+
+  titleEl.textContent = title;
+  textEl.textContent = text;
+
+  missingList.innerHTML = "";
+  if (missing && missing.length > 0) {
+    missing.forEach(item => {
+      const li = document.createElement("li");
+      li.textContent = `${item.count}x ${item.displayName || item.name || "Unknown item"}`;
+      missingList.appendChild(li);
+    });
+  }
+
+  popup.classList.add("open");
+}
+
+function closeResultPopup() {
+  document.getElementById("result-popup").classList.remove("open");
+}
+
+document.getElementById("popup-close-btn").addEventListener("click", closeResultPopup);
+
+// ===== STORAGE MODAL =====
 const storageModal = document.getElementById("storage-modal");
 
 document.getElementById("open-storage-btn").addEventListener("click", () => {
@@ -352,7 +343,58 @@ document.getElementById("control-btn").addEventListener("click", () => {
   storageModal.classList.add("open");
 });
 
-// ===== WS =====
+// ===== HANDLE RESULT EVENT =====
+function handleCommandResult(msg) {
+  const requested = Number(msg.requested || 0);
+  const accepted = Number(msg.accepted || 0);
+  const missing = Array.isArray(msg.missing) ? msg.missing : [];
+  const reason = msg.reason || "";
+
+  if (msg.status === "done") {
+    showResultPopup({
+      title: "Craft Queued",
+      text: `Craft request accepted for ${accepted || requested} item(s).`,
+      mode: "success",
+      missing: []
+    });
+    return;
+  }
+
+  if (msg.status === "partial") {
+    const detail = accepted > 0
+      ? `Requested ${requested}, but materials are missing.`
+      : `Craft request could not be fully satisfied.`;
+
+    showResultPopup({
+      title: "Partial Craft Availability",
+      text: detail,
+      mode: "warn",
+      missing
+    });
+    return;
+  }
+
+  if (msg.status === "failed") {
+    let text = "Craft request failed.";
+
+    if (reason === "no_pattern") {
+      text = "No crafting pattern is available for this item.";
+    } else if (reason === "missing_items") {
+      text = "Craft request failed because materials are missing.";
+    } else if (reason) {
+      text = `Craft request failed: ${reason}`;
+    }
+
+    showResultPopup({
+      title: "Craft Failed",
+      text,
+      mode: "error",
+      missing
+    });
+  }
+}
+
+// ===== WEBSOCKET =====
 function connectWS() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${proto}://${location.host}/ws`);
@@ -365,6 +407,10 @@ function connectWS() {
     try {
       const msg = JSON.parse(ev.data);
       console.log("WS message:", msg);
+
+      if (msg.event === "command_result") {
+        handleCommandResult(msg);
+      }
     } catch (e) {
       console.error("WS parse failed:", e, ev.data);
     }
