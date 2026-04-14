@@ -3,7 +3,88 @@
 <head>
 <meta charset="utf-8">
 <title>AXIS Control</title>
-<link rel="stylesheet" href="css/demo.css">
+<link rel="stylesheet" href="/css/demo.css">
+<style>
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.84);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    padding: 16px;
+  }
+
+  .modal-backdrop.open {
+    display: flex;
+  }
+
+  .modal-panel {
+    width: min(1100px, 100%);
+    max-height: 88vh;
+    overflow: auto;
+    background: #050505;
+    border: 1px solid rgba(0, 255, 200, 0.22);
+    box-shadow: 0 0 30px rgba(0, 255, 200, 0.08);
+    padding: 18px;
+  }
+
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+
+  .modal-close {
+    cursor: pointer;
+  }
+
+  .storage-toolbar {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+
+  .storage-toolbar input {
+    min-width: 260px;
+  }
+
+  .muted-text {
+    opacity: 0.75;
+    font-size: 0.92rem;
+  }
+
+  .item-meta {
+    margin-top: 8px;
+    opacity: 0.8;
+    font-size: 0.92rem;
+  }
+
+  .item-actions {
+    margin-top: 12px;
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .item-actions input {
+    max-width: 110px;
+  }
+
+  .tag-ok {
+    color: #6dffcf;
+  }
+
+  .tag-off {
+    opacity: 0.7;
+  }
+</style>
 </head>
 <body>
 
@@ -15,57 +96,196 @@
 <header class="navbar">
   <div class="container navbar-inner">
     <div class="logo-wrapper">
-      <div class="logo">AXIS</div>
+      <div class="logo" data-text="AXIS">AXIS</div>
       <div class="logo-sub">Control Interface</div>
+    </div>
+    <div class="nav-links">
+      <a href="#hero">Home</a>
+      <a href="#systems">System</a>
+      <a href="#footer">Access</a>
     </div>
   </div>
 </header>
 
-<section class="hero">
+<section class="hero" id="hero">
   <div class="container">
-    <h1>ME Storage Control</h1>
-    <p id="status">Connecting...</p>
+    <h1>Secure Access Interface</h1>
+    <p id="hero-text">
+      Establishing secure link to system modules.
+    </p>
+    <button class="axis-btn" id="control-btn">Open Control</button>
   </div>
 </section>
 
-<section>
+<section id="systems">
   <div class="container">
+    <div class="card-grid">
 
-    <input id="search" placeholder="Search item...">
+      <div class="card" id="card-me">
+        <h3>ME System</h3>
+        <p id="me-summary">Storage cache unavailable.</p>
+        <button class="axis-btn" id="open-storage-btn">Open Storage</button>
+      </div>
+
+      <div class="card" id="card-power">
+        <h3>Power Grid</h3>
+        <p id="power-summary">Telemetry pending integration.</p>
+      </div>
+
+      <div class="card" id="card-temp">
+        <h3>Temporary Free</h3>
+        <p id="temp-summary">Reserved slot for future module deployment.</p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<div class="modal-backdrop" id="storage-modal">
+  <div class="modal-panel">
+    <div class="modal-header">
+      <div>
+        <h2 style="margin:0;">ME Storage</h2>
+        <div class="muted-text" id="storage-meta">No data loaded.</div>
+      </div>
+      <button class="axis-btn modal-close" id="close-storage-btn">Close</button>
+    </div>
+
+    <div class="storage-toolbar">
+      <input id="search" placeholder="Search item...">
+      <span class="muted-text" id="storage-count">0 visible items</span>
+    </div>
 
     <div class="card-grid" id="items"></div>
-
   </div>
-</section>
+</div>
+
+<footer class="footer" id="footer">
+  AXIS SYSTEMS © 2026 | All activity monitored
+</footer>
 
 <script>
 let storage = [];
-let ws;
+let ws = null;
+
+// ===== LOAD STATUS =====
+async function loadStatus() {
+  try {
+    const res = await fetch('/api/status');
+    const data = await res.json();
+
+    if (!data.ok || !data.data) {
+      document.getElementById("hero-text").textContent = "Status channel unavailable.";
+      return false;
+    }
+
+    const online = data.data.wifi ? "ONLINE" : "OFFLINE";
+    const queue = data.data.queue ?? 0;
+    const meAge = data.data.me_age ?? -1;
+
+    document.getElementById("hero-text").textContent =
+      `Primary node ${online} | Queue: ${queue} | ME age: ${meAge}`;
+
+    return true;
+  } catch (e) {
+    document.getElementById("hero-text").textContent = "Status request failed.";
+    console.error("Status load failed:", e);
+    return false;
+  }
+}
 
 // ===== LOAD ME =====
 async function loadME() {
-  const res = await fetch('/api/me/list');
-  const data = await res.json();
+  try {
+    const res = await fetch('/api/me/list');
+    const data = await res.json();
 
-  storage = data.items || [];
-  render(storage);
+    if (!data.items || !Array.isArray(data.items)) {
+      storage = [];
+      updateSummaries();
+      render([]);
+      return false;
+    }
+
+    storage = data.items;
+    updateSummaries();
+    render(storage);
+    return true;
+  } catch (e) {
+    console.error("ME load failed:", e);
+    storage = [];
+    updateSummaries();
+    render([]);
+    return false;
+  }
 }
 
-// ===== RENDER =====
+// ===== SUMMARY CARDS =====
+function updateSummaries() {
+  const totalTypes = storage.length;
+  const totalItems = storage.reduce((sum, item) => sum + (Number(item.count) || 0), 0);
+  const craftableCount = storage.filter(item => !!item.isCraftable).length;
+
+  document.getElementById("me-summary").textContent =
+    totalTypes > 0
+      ? `${totalTypes} item types tracked | ${craftableCount} craftable | Total units: ${totalItems}`
+      : "Storage cache unavailable.";
+
+  document.getElementById("power-summary").textContent =
+    "Telemetry pending integration.";
+
+  document.getElementById("temp-summary").textContent =
+    "Reserved slot for future module deployment.";
+
+  document.getElementById("storage-meta").textContent =
+    totalTypes > 0
+      ? `${totalTypes} item types | ${craftableCount} craftable | Total units: ${totalItems}`
+      : "No storage data loaded.";
+}
+
+// ===== RENDER STORAGE =====
 function render(items) {
   const container = document.getElementById("items");
   container.innerHTML = "";
 
-  items.slice(0, 200).forEach(item => {
+  const visible = items.slice(0, 120);
+  document.getElementById("storage-count").textContent = `${visible.length} visible items`;
+
+  visible.forEach(item => {
+    const safeId = String(item.name).replace(/[^a-zA-Z0-9_-]/g, "_");
+    const displayName = item.displayName || item.name;
+    const craftable = !!item.isCraftable;
+    const count = Number(item.count) || 0;
+
+    let availability = "Unavailable";
+    if (count > 0) {
+      availability = "In stock";
+    } else if (craftable) {
+      availability = "Craft on demand";
+    }
+
+    const actionHtml = craftable
+      ? `
+        <div class="item-actions">
+          <input type="number" value="1" min="1" id="c_${safeId}">
+          <button class="axis-btn" onclick="craft('${encodeURIComponent(item.name)}', '${safeId}')">Craft</button>
+        </div>
+      `
+      : `
+        <div class="item-actions">
+          <span class="muted-text">Not craftable</span>
+        </div>
+      `;
 
     const div = document.createElement("div");
     div.className = "card";
 
     div.innerHTML = `
-      <h3>${item.name}</h3>
-      <p>${item.count}</p>
-      <input type="number" value="1" id="c_${item.name}">
-      <button onclick="craft('${item.name}')">Craft</button>
+      <h3>${displayName}</h3>
+      <p>Stored: ${count}</p>
+      <div class="item-meta">Status: <span class="${craftable ? 'tag-ok' : 'tag-off'}">${availability}</span></div>
+      <div class="item-meta">Internal: ${item.name}</div>
+      ${actionHtml}
     `;
 
     container.appendChild(div);
@@ -77,60 +297,133 @@ document.getElementById("search").addEventListener("input", (e) => {
   const q = e.target.value.toLowerCase();
 
   const filtered = storage.filter(i =>
-    i.name.toLowerCase().includes(q)
+    String(i.displayName || "").toLowerCase().includes(q) ||
+    String(i.name || "").toLowerCase().includes(q)
   );
 
   render(filtered);
 });
 
 // ===== CRAFT =====
-async function craft(name) {
-  const count = document.getElementById("c_" + name).value;
+async function craft(encodedName, safeId) {
+  const name = decodeURIComponent(encodedName);
+  const countEl = document.getElementById("c_" + safeId);
+  const count = Number(countEl?.value || 1);
 
-  await fetch('/api/command', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      type: "craft",
-      payload: {
-        item: name,
-        count: Number(count)
-      }
-    })
-  });
+  try {
+    const res = await fetch('/api/command', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        type: "craft",
+        payload: {
+          item: name,
+          count: count
+        }
+      })
+    });
+
+    const data = await res.json();
+    console.log("Craft response:", data);
+  } catch (e) {
+    console.error("Craft failed:", e);
+  }
 }
+
+// ===== MODAL =====
+const storageModal = document.getElementById("storage-modal");
+
+document.getElementById("open-storage-btn").addEventListener("click", () => {
+  storageModal.classList.add("open");
+});
+
+document.getElementById("close-storage-btn").addEventListener("click", () => {
+  storageModal.classList.remove("open");
+});
+
+storageModal.addEventListener("click", (e) => {
+  if (e.target === storageModal) {
+    storageModal.classList.remove("open");
+  }
+});
+
+// ===== HERO BUTTON =====
+document.getElementById("control-btn").addEventListener("click", () => {
+  storageModal.classList.add("open");
+});
 
 // ===== WS =====
 function connectWS() {
-  ws = new WebSocket(`ws://${location.host}/ws`);
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  ws = new WebSocket(`${proto}://${location.host}/ws`);
 
   ws.onopen = () => {
-    document.getElementById("status").textContent = "ONLINE";
+    console.log("WS connected");
   };
 
-  ws.onmessage = (ev) => {
-    const msg = JSON.parse(ev.data);
+  ws.onmessage = async (ev) => {
+    try {
+      const msg = JSON.parse(ev.data);
+      console.log("WS message:", msg);
+    } catch (e) {
+      console.error("WS parse failed:", e, ev.data);
+    }
 
-    // refresh ME on any event
-    loadME();
+    await loadStatus();
+    await loadME();
   };
 
   ws.onclose = () => {
-    document.getElementById("status").textContent = "RECONNECTING";
+    console.log("WS reconnecting...");
     setTimeout(connectWS, 2000);
   };
+
+  ws.onerror = (e) => {
+    console.error("WS error:", e);
+  };
+}
+
+// ===== LOADER =====
+async function runLoader() {
+  const progress = document.getElementById("progress-bar");
+  const loader = document.getElementById("loader");
+  const loaderText = document.getElementById("loader-text");
+
+  const steps = [
+    "Initializing control plane...",
+    "Loading storage cache...",
+    "Binding telemetry channels...",
+    "Synchronization complete."
+  ];
+
+  let p = 0;
+  const timer = setInterval(() => {
+    p += 1.8;
+    if (p > 100) p = 100;
+    progress.style.width = p + "%";
+    if (p >= 100) clearInterval(timer);
+  }, 30);
+
+  for (const step of steps) {
+    loaderText.textContent = step;
+    await new Promise(r => setTimeout(r, 450));
+  }
+
+  loader.style.transition = "opacity 0.6s ease";
+  loader.style.opacity = 0;
+  setTimeout(() => loader.style.display = "none", 700);
 }
 
 // ===== INIT =====
 document.addEventListener("DOMContentLoaded", async () => {
-
+  await loadStatus();
   await loadME();
-
-  document.getElementById("loader").style.display = "none";
+  await runLoader();
 
   connectWS();
 
-  setInterval(loadME, 10000); // fallback refresh
+  setInterval(loadStatus, 3000);
+  setInterval(loadME, 10000);
 });
 </script>
 

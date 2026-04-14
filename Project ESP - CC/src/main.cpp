@@ -7,8 +7,8 @@
 #include <algorithm>
 
 // ===================== AP CONFIG =====================
-#define AP_SSID "ESP-Setup"
-#define AP_PASS "12345678"
+#define AP_SSID "AP client"
+#define AP_PASS "1234567890"
 
 // ===================== SERVER =====================
 AsyncWebServer server(80);
@@ -128,6 +128,12 @@ void loadConfig() {
     return;
   }
 
+  if (f.size() == 0) {
+    addLog("[FS] config.json empty");
+    f.close();
+    return;
+  }
+
   StaticJsonDocument<256> doc;
   DeserializationError err = deserializeJson(doc, f);
   f.close();
@@ -184,6 +190,12 @@ void loadQueue() {
     return;
   }
 
+  if (f.size() == 0) {
+    addLog("[FS] queue.json empty");
+    f.close();
+    return;
+  }
+
   StaticJsonDocument<8192> doc;
   DeserializationError err = deserializeJson(doc, f);
   f.close();
@@ -234,6 +246,12 @@ void loadME() {
     return;
   }
 
+  if (f.size() == 0) {
+    addLog("[FS] me.json empty");
+    f.close();
+    return;
+  }
+
   meStorage = f.readString();
   f.close();
   addLog("[FS] me cache loaded");
@@ -246,11 +264,11 @@ void emitCommandWS(const Command& cmd) {
   doc["id"] = cmd.id;
   doc["type"] = cmd.type;
 
-  JsonVariant payloadVariant = doc.createNestedObject("payload");
-  DeserializationError err = deserializeJson(payloadVariant, cmd.payload);
-  if (err) {
-    // fallback when payload isn't valid JSON for some reason
-    doc.remove("payload");
+  StaticJsonDocument<256> payloadDoc;
+  DeserializationError err = deserializeJson(payloadDoc, cmd.payload);
+  if (!err) {
+    doc["payload"] = payloadDoc.as<JsonVariantConst>();
+  } else {
     doc["payload_raw"] = cmd.payload;
   }
 
@@ -306,7 +324,6 @@ void wifiTask(void* pvParameters) {
     }
 
     if (!connectedNow && connectInProgress) {
-      // allow retries later
       connectInProgress = false;
     }
 
@@ -433,6 +450,20 @@ void setupWeb() {
     String out;
     serializeJson(doc, out);
     req->send(200, "application/json", out);
+  });
+
+  // ---------- STA: STATUS ----------
+  server.on("/api/status", HTTP_GET, [](AsyncWebServerRequest* req) {
+    if (!isSTA(req)) {
+      req->send(403, "application/json", makeErrorResponse("sta_only"));
+      return;
+    }
+
+    req->send(200, "application/json", makeOkResponse([](JsonObject data) {
+      data["wifi"] = staConnected;
+      data["queue"] = commandQueue.size();
+      data["me_age"] = meLastUpdate == 0 ? -1 : (int32_t)(millis() - meLastUpdate);
+    }));
   });
 
   // ---------- STA: COMMAND ----------

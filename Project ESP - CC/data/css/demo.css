@@ -1,0 +1,327 @@
+/* ===== RESET ===== */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family: "DM Mono", monospace;
+  background: #000;
+  color: #fff;
+}
+
+/* ===== GLOBAL ===== */
+:root {
+  --accent: #2EFFB5;
+  --accent-soft: rgba(46, 255, 181, 0.15);
+  --border-soft: rgba(255, 255, 255, 0.15);
+  --transition: 0.3s ease;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+  transition: opacity var(--transition);
+}
+
+a:hover {
+  opacity: 0.7;
+}
+
+/* ===== LAYOUT ===== */
+.container {
+  width: 90%;
+  max-width: 1100px;
+  margin: auto;
+}
+
+section {
+  padding: 80px 0;
+}
+
+/* ===== NAVBAR ===== */
+.navbar {
+  border-bottom: 1px solid var(--border-soft);
+  padding: 20px 0;
+}
+
+.navbar-inner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* ===== FINAL LOGO SYSTEM ===== */
+
+.logo-wrapper {
+  position: relative;
+  display: inline-block;
+}
+
+.logo {
+  position: relative;
+  font-weight: 800;
+  font-size: 22px;
+  letter-spacing: 6px;
+  text-transform: uppercase;
+  color: var(--accent);
+  cursor: default;
+  animation: logoReveal 1.2s ease forwards;
+  transition: transform 0.2s ease;
+}
+
+/* Neon glow aura + scan shift */
+.logo::before {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  color: var(--accent);
+  opacity: 0.2;
+  filter: blur(8px);
+  z-index: -1;
+  
+  /* Animace: puls + horizontální posun */
+  animation: pulseGlow 3s infinite ease-in-out, scanShift 5s infinite linear;
+}
+
+/* Puls glow – stoupá a klesá intenzita */
+@keyframes pulseGlow {
+  0% { opacity: 0.15; }
+  50% { opacity: 0.3; }
+  100% { opacity: 0.15; }
+}
+
+/* Jemný horizontální posun */
+@keyframes scanShift {
+  0% { transform: translateX(0); }
+  50% { transform: translateX(1px); }
+  100% { transform: translateX(0); }
+}
+
+/* RGB glitch vrstvy */
+.logo::after {
+  content: attr(data-text);
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  opacity: 0;
+}
+
+/* Hover RGB split */
+.logo:hover {
+  transform: translateY(-1px);
+}
+
+.logo:hover::before {
+  animation: none; /* stop glow breathing při hoveru */
+}
+
+.logo:hover::after {
+  opacity: 1;
+  text-shadow:
+    -2px 0 red,
+    2px 0 cyan;
+}
+
+/* Reveal animace */
+@keyframes logoReveal {
+  0% {
+    opacity: 0;
+    transform: translateY(-10px);
+    letter-spacing: 20px;
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+    letter-spacing: 6px;
+  }
+}
+
+/* Glow breathing */
+@keyframes pulseGlow {
+  0% { opacity: 0.15; }
+  50% { opacity: 0.3; }
+  100% { opacity: 0.15; }
+}
+
+.logo-sub {
+  font-size: 10px;
+  letter-spacing: 2px;
+  opacity: 0.4;
+  margin-top: 2px;
+}
+
+/* ===== NAV LINKS UPGRADE ===== */
+.nav-links a {
+  position: relative;
+  margin-left: 30px;
+  font-size: 14px;
+  letter-spacing: 1px;
+  padding: 6px 4px;
+  color: white;
+  transition: 0.3s ease;
+}
+
+/* jemný neon underline */
+.nav-links a::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 0%;
+  height: 1px;
+  background: var(--accent);
+  transition: 0.3s ease;
+  box-shadow: 0 0 8px var(--accent);
+}
+
+/* hover efekt */
+.nav-links a:hover {
+  color: var(--accent);
+}
+
+.nav-links a:hover::after {
+  width: 100%;
+}
+
+/* ===== HERO ===== */
+.hero {
+  text-align: center;
+  padding: 120px 0;
+}
+
+.hero h1 {
+  font-size: 42px;
+  margin-bottom: 20px;
+}
+
+.hero p {
+  opacity: 0.7;
+  max-width: 600px;
+  margin: auto;
+  margin-bottom: 40px;
+}
+
+/* ===== BUTTON ===== */
+.axis-btn {
+  --pad: 2px;
+  --corner: 10px;
+
+  position: relative;
+  cursor: pointer;
+  appearance: none;
+  border: 1px solid var(--border-soft);
+  background: linear-gradient(to right,
+    rgba(255,255,255,0.05),
+    rgba(255,255,255,0.2)
+  );
+  color: white;
+  padding: 12px 28px;
+  font-size: 14px;
+  transition: var(--transition);
+}
+
+.axis-btn::before {
+  content: "";
+  position: absolute;
+  inset: calc(-1 * var(--pad));
+  padding: var(--pad);
+  border: 2px solid white;
+  pointer-events: none;
+
+  mask:
+    conic-gradient(#000 0 0) content-box,
+    conic-gradient(
+      at var(--corner) var(--corner),
+      transparent 75%,
+      #000 0
+    ) 0 0 /
+    calc(100% - var(--corner))
+    calc(100% - var(--corner));
+  transition: var(--transition);
+}
+
+.axis-btn:hover {
+  border-color: var(--accent);
+  background: linear-gradient(
+    to right,
+    rgba(46,255,181,0.05),
+    rgba(46,255,181,0.2)
+  );
+  --pad: 8px;
+}
+
+.axis-btn:hover::before {
+  border-color: var(--accent);
+}
+
+/* ===== CARDS ===== */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 30px;
+}
+
+.card {
+  border: 1px solid var(--border-soft);
+  padding: 30px;
+  transition: var(--transition);
+}
+
+/* hover efekt – vše dohromady */
+.card:hover {
+  transform: translateY(-5px); /* lehce vyskočí */
+  border-color: var(--accent); /* změna barvy hranice */
+  background: var(--accent-soft); /* pozadí se rozjasní */
+}
+
+.card h3 {
+  margin-top: 0;
+}
+
+/* ===== FOOTER ===== */
+.footer {
+  border-top: 1px solid var(--border-soft);
+  text-align: center;
+  padding: 30px 0;
+  font-size: 13px;
+  opacity: 0.5;
+}
+
+/* Loader fullscreen */
+#loader {
+  position: fixed;
+  inset: 0;
+  background: #000;
+  display: flex;
+  flex-direction: column; /* aby bar a text byly pod sebou */
+  justify-content: center;
+  align-items: center;
+  z-index: 9999;
+}
+
+/* Progres bar */
+#progress-bar {
+  width: 0%;
+  height: 6px;
+  background: var(--accent);
+  box-shadow: 0 0 10px var(--accent);
+  border-radius: 3px;
+  transition: width 0.75s ease; /* prodloužili jsme dobu pro smooth efekt */
+  margin-bottom: 15px;
+}
+
+/* Text pod bar */
+#loader-text {
+  font-family: "DM Mono", monospace;
+  font-size: 14px;
+  color: var(--accent);
+  opacity: 0.8;
+  letter-spacing: 1px;
+  text-align: center;
+}
