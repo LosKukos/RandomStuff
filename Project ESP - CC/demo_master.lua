@@ -8,8 +8,8 @@
 local ME_BRIDGE = "right"            -- side/jméno ME bridge periferie
 local PACKAGER = "left"              -- side/jméno packager periferie
 local DEPOT = "back"                 -- side/jméno depotu
-local BRIDGE_CHEST_DIRECTION = "up"  -- směr od ME bridge do bridge chest
-local CLUTCH_REDSTONE_SIDE = "top"   -- redstone výstup na clutch ZA depotem
+local BRIDGE_CHEST_DIRECTION = "right"  -- směr od ME bridge do bridge chest
+local CLUTCH_REDSTONE_SIDE = "back"   -- redstone výstup na clutch ZA depotem
 
 -- clutch logika:
 -- true  = redstone ON => belt jede
