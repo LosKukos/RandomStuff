@@ -1,38 +1,30 @@
--- master_poc.lua
--- Proof of concept pro MASTER chain:
--- ME -> bridge chest -> buffer chest -> packager -> inspection depot -> arm -> output
---
--- CC:
--- - exportuje item z ME
--- - čeká na buffer
--- - nastaví address
--- - udělá balík
--- - přečte balík na depotu
--- - dá SET pulse do SR latch pro arm release
+-- master_poc_v3.lua
+-- Refactorovana verze PoC master logiky
+-- Bez partial pullu z ME
+-- 1 balicek = 1 item type
+-- Pouziva inspection depot a SR latch SET pulse pro arm release
 
 -- ==================================================
 -- CONFIG
 -- ==================================================
-local ME_BRIDGE = "right"               -- peripheral name/side
-local PACKAGER = "left"                 -- peripheral name/side
-local BUFFER_CHEST = "minecraft:chest_1" -- jméno buffer chest, kterou čte CC
-local DEPOT = "back"                    -- peripheral name/side depotu
-local BRIDGE_CHEST_DIRECTION = "up"     -- směr exportu z ME bridge do bridge chest
-local ARM_SET_REDSTONE_SIDE = "top"     -- redstone strana na SET vstup SR latch
+local CFG = {
+  meBridge = "right",                  -- peripheral name/side
+  packager = "left",                   -- peripheral name/side
+  bufferChest = "minecraft:chest_1",   -- jmeno buffer chest
+  depot = "back",                      -- peripheral name/side depotu
+  bridgeChestDirection = "up",         -- smer exportu z ME bridge do bridge chest
+  armSetRedstoneSide = "top",          -- SET vstup SR latch
 
--- Jak dlouho čekat na itemy / balík
-local BUFFER_TIMEOUT = 10
-local DEPOT_TIMEOUT = 10
-local DEPOT_CLEAR_TIMEOUT = 5
+  bufferTimeout = 10,
+  depotTimeout = 10,
+  depotClearTimeout = 5,
 
--- Délka SET pulsu do latch
-local SET_PULSE = 0.15
-
--- Polling interval
-local POLL = 0.1
+  setPulse = 0.15,
+  poll = 0.1,
+}
 
 -- ==================================================
--- HELPERS
+-- UTILS
 -- ==================================================
 local function prompt(text, default)
   write(text)
@@ -47,16 +39,24 @@ local function prompt(text, default)
   return v
 end
 
+local function promptOptional(text)
+  write(text .. " (leave empty if not needed): ")
+  local v = read()
+  if v == "" then
+    return nil
+  end
+  return v
+end
+
 local function dump(v)
   print(textutils.serialise(v))
 end
 
-local function wrapPeripheral(name, label)
-  local p = peripheral.wrap(name)
-  if not p then
-    error("Nenalezena periferie pro " .. label .. ": " .. tostring(name))
-  end
-  return p
+local function printHeader(title)
+  print("")
+  print(("="):rep(50))
+  print(title)
+  print(("="):rep(50))
 end
 
 local function safeCall(fn, ...)
@@ -67,43 +67,140 @@ local function safeCall(fn, ...)
   return true, a, b, c, d
 end
 
-local function pulseSet()
-  redstone.setOutput(ARM_SET_REDSTONE_SIDE, true)
-  sleep(SET_PULSE)
-  redstone.setOutput(ARM_SET_REDSTONE_SIDE, false)
+local function wrapPeripheral(name, label)
+  local p = peripheral.wrap(name)
+  if not p then
+    error("Nenalezena periferie pro " .. label .. ": " .. tostring(name))
+  end
+  return p
 end
 
-local function getBufferCount(inv, wantedName)
-  local ok, items = safeCall(inv.list)
+local function pulseSet(side, pulseLength)
+  redstone.setOutput(side, true)
+  sleep(pulseLength)
+  redstone.setOutput(side, false)
+end
+
+-- ==================================================
+-- INIT
+-- ==================================================
+local me = wrapPeripheral(CFG.meBridge, "ME Bridge")
+local packager = wrapPeripheral(CFG.packager, "Packager")
+local bufferChest = wrapPeripheral(CFG.bufferChest, "Buffer Chest")
+local depot = wrapPeripheral(CFG.depot, "Depot")
+
+redstone.setOutput(CFG.armSetRedstoneSide, false)
+
+-- ==================================================
+-- FILTER / MATCHING
+-- ==================================================
+local function buildFilterFromPrompt()
+  local itemName = prompt("Item name", "minecraft:iron_ingot")
+  local count = tonumber(prompt("Count", "16"))
+  local address = prompt("Package address", "ORD0001|P01")
+  local nbt = promptOptional("NBT")
+  local fingerprint = promptOptional("Fingerprint")
+
+  if not count or count < 1 then
+    error("Neplatny count")
+  end
+
+  local filter = {
+    name = itemName,
+    count = count
+  }
+
+  if nbt then
+    filter.nbt = nbt
+  end
+
+  if fingerprint then
+    filter.fingerprint = fingerprint
+  end
+
+  return filter, address
+end
+
+local function matchesItem(item, filter)
+  if filter.name and item.name ~= filter.name then
+    return false
+  end
+
+  if filter.nbt and item.nbt ~= filter.nbt then
+    return false
+  end
+
+  if filter.fingerprint and item.fingerprint ~= filter.fingerprint then
+    return false
+  end
+
+  return true
+end
+
+local function findMatchingMEItem(filter)
+  local ok, items = safeCall(me.getItems)
+  if not ok or type(items) ~= "table" then
+    return nil, "getItems_failed"
+  end
+
+  for _, item in ipairs(items) do
+    if matchesItem(item, filter) then
+      return item
+    end
+  end
+
+  return nil, "item_not_found"
+end
+
+local function getAvailableCount(filter)
+  local item, err = findMatchingMEItem(filter)
+  if not item then
+    return 0, err, nil
+  end
+
+  return item.amount or item.count or 0, nil, item
+end
+
+-- ==================================================
+-- BUFFER / DEPOT HELPERS
+-- ==================================================
+local function getBufferCount(filter)
+  local ok, items = safeCall(bufferChest.list)
   if not ok or type(items) ~= "table" then
     return 0
   end
 
   local total = 0
   for _, item in pairs(items) do
-    if item.name == wantedName then
-      total = total + (item.count or 0)
+    if item.name == filter.name then
+      if filter.nbt then
+        if item.nbt == filter.nbt then
+          total = total + (item.count or 0)
+        end
+      else
+        total = total + (item.count or 0)
+      end
     end
   end
 
   return total
 end
 
-local function waitForBuffer(inv, wantedName, wantedCount, timeoutSec)
+local function waitForBuffer(filter, wantedCount, timeoutSec)
   local deadline = os.clock() + timeoutSec
 
   while os.clock() < deadline do
-    local count = getBufferCount(inv, wantedName)
+    local count = getBufferCount(filter)
     if count >= wantedCount then
       return true, count
     end
-    sleep(POLL)
+    sleep(CFG.poll)
   end
 
-  return false, getBufferCount(inv, wantedName)
+  return false, getBufferCount(filter)
 end
 
-local function waitForDepotPackage(depot, timeoutSec)
+local function waitForDepotPackage(timeoutSec)
   local deadline = os.clock() + timeoutSec
 
   while os.clock() < deadline do
@@ -111,13 +208,13 @@ local function waitForDepotPackage(depot, timeoutSec)
     if ok and item and item.package then
       return true, item
     end
-    sleep(POLL)
+    sleep(CFG.poll)
   end
 
   return false, nil
 end
 
-local function waitForDepotEmpty(depot, timeoutSec)
+local function waitForDepotEmpty(timeoutSec)
   local deadline = os.clock() + timeoutSec
 
   while os.clock() < deadline do
@@ -125,183 +222,302 @@ local function waitForDepotEmpty(depot, timeoutSec)
     if ok and not item then
       return true
     end
-    sleep(POLL)
+    sleep(CFG.poll)
   end
 
   return false
 end
 
-local function printHeader(title)
-  print("")
-  print(("="):rep(42))
-  print(title)
-  print(("="):rep(42))
-end
-
 -- ==================================================
--- INIT
+-- PACKAGER / PACKAGE HELPERS
 -- ==================================================
-local me = wrapPeripheral(ME_BRIDGE, "ME Bridge")
-local packager = wrapPeripheral(PACKAGER, "Packager")
-local bufferChest = wrapPeripheral(BUFFER_CHEST, "Buffer Chest")
-local depot = wrapPeripheral(DEPOT, "Depot")
-
--- defaultně držíme SET low
-redstone.setOutput(ARM_SET_REDSTONE_SIDE, false)
-
-printHeader("MASTER POC")
-
-local itemName = prompt("Item name", "minecraft:iron_ingot")
-local count = tonumber(prompt("Count", "16"))
-local address = prompt("Package address", "ORD0001|P01")
-
-if not count or count < 1 then
-  error("Neplatny count")
-end
-
-print("")
-print("Item:         " .. tostring(itemName))
-print("Count:        " .. tostring(count))
-print("Address:      " .. tostring(address))
-print("Buffer chest: " .. tostring(BUFFER_CHEST))
-print("Depot:        " .. tostring(DEPOT))
-
--- ==================================================
--- 1) Nastav address na packageru
--- ==================================================
-do
+local function setPackagerAddress(address)
   local ok, res = safeCall(packager.setAddress, address)
   if not ok then
-    error("packager.setAddress selhal: " .. tostring(res))
+    return false, "setAddress_failed: " .. tostring(res)
   end
 
   local ok2, currentAddress = safeCall(packager.getAddress)
   if not ok2 then
-    error("packager.getAddress selhal: " .. tostring(currentAddress))
+    return false, "getAddress_failed: " .. tostring(currentAddress)
   end
-
-  print("[1/7] Packager address:", tostring(currentAddress))
 
   if currentAddress ~= address then
-    error("Packager address mismatch. Ocekavano " .. tostring(address) .. ", dostal jsem " .. tostring(currentAddress))
+    return false, "address_mismatch_on_packager"
   end
+
+  return true, currentAddress
 end
 
--- ==================================================
--- 2) Export z ME do bridge chest
--- ==================================================
-do
-  local moved, err = me.exportItem(
-    {
-      name = itemName,
-      count = count
-    },
-    BRIDGE_CHEST_DIRECTION
-  )
-
-  print("[2/7] exportItem moved:", tostring(moved), "err:", tostring(err))
-
-  if not moved or moved < count then
-    error("ME export nepresunul dost itemu. Requested=" .. tostring(count) .. " moved=" .. tostring(moved))
-  end
-end
-
--- ==================================================
--- 3) Počkej na item v buffer chest
--- ==================================================
-do
-  print("[3/7] Cekam na item v buffer chest...")
-
-  local ok, actual = waitForBuffer(bufferChest, itemName, count, BUFFER_TIMEOUT)
-  print("[3/7] Buffer result:", tostring(ok), "count:", tostring(actual))
-
-  if not ok then
-    error("Buffer chest nema dost itemu. Nasel jsem jen " .. tostring(actual))
-  end
-end
-
--- ==================================================
--- 4) Ruční potvrzení, že Create chain je ready
--- ==================================================
-print("[4/7] Nech Create chain presunout item do packageru.")
-print("       Az bude item ready k zabalení, stiskni ENTER.")
-read()
-
--- ==================================================
--- 5) Vytvoř balík
--- ==================================================
-do
+local function makePackage()
   local ok, res = safeCall(packager.makePackage, true)
-  print("[5/7] makePackage(true):", tostring(ok), tostring(res))
-
   if not ok then
-    error("makePackage selhal: " .. tostring(res))
+    return false, "makePackage_failed: " .. tostring(res)
   end
+  return true, res
 end
 
--- ==================================================
--- 6) Přečti balík na inspection depotu
--- ==================================================
-local depotPackageItem
-do
-  print("[6/7] Cekam na balicek na inspection depotu...")
-
-  local ok, item = waitForDepotPackage(depot, DEPOT_TIMEOUT)
+local function readDepotPackage(expectedAddress)
+  local ok, item = waitForDepotPackage(CFG.depotTimeout)
   if not ok then
-    error("Balicek nedorazil na depot v casovem limitu")
+    return false, "package_not_found_on_depot"
   end
 
-  depotPackageItem = item
+  if not item.package then
+    return false, "depot_item_has_no_package_api"
+  end
 
   local pkg = item.package
-  if not pkg then
-    error("Depot item nema package API")
-  end
 
-  local okAddr, depotAddress = safeCall(function()
+  local okAddr, addr = safeCall(function()
     return pkg:getAddress()
   end)
 
   if not okAddr then
-    error("pkg:getAddress() selhal: " .. tostring(depotAddress))
+    return false, "pkg_getAddress_failed: " .. tostring(addr)
   end
 
-  print("[6/7] Depot address:", tostring(depotAddress))
-
-  if depotAddress ~= address then
-    error("Address mismatch na depotu. Ocekavano " .. tostring(address) .. ", prislo " .. tostring(depotAddress))
+  if addr ~= expectedAddress then
+    return false, "depot_address_mismatch: expected=" .. tostring(expectedAddress) .. " got=" .. tostring(addr)
   end
 
   local okList, contents = safeCall(function()
     return pkg:list()
   end)
 
-  if okList then
-    print("Package contents:")
-    dump(contents)
-  else
-    print("pkg:list() selhalo:", tostring(contents))
+  if not okList then
+    contents = nil
   end
 
-  print("[6/7] Balicek overen.")
+  return true, {
+    address = addr,
+    contents = contents,
+    rawItem = item
+  }
 end
 
--- ==================================================
--- 7) Pusť arm přes SR latch SET pulse
--- ==================================================
-do
-  print("[7/7] Posilam SET pulse do SR latch...")
-  pulseSet()
+local function releaseFromDepot()
+  pulseSet(CFG.armSetRedstoneSide, CFG.setPulse)
 
-  print("[7/7] Cekam, az balicek zmizi z inspection depotu...")
-  local cleared = waitForDepotEmpty(depot, DEPOT_CLEAR_TIMEOUT)
-
+  local cleared = waitForDepotEmpty(CFG.depotClearTimeout)
   if not cleared then
-    print("WARN: Depot se nevyprázdnil v limitu. Mozna arm nedobehla nebo latch/reset nefunguje.")
-  else
-    print("[7/7] Balicek opustil inspection depot.")
+    return false, "depot_not_cleared_after_release"
+  end
+
+  return true
+end
+
+-- ==================================================
+-- ME EXPORT WITHOUT PARTIAL PULL
+-- ==================================================
+local function exportIfEnough(filter)
+  local requested = tonumber(filter.count) or 1
+  local available, err, meItem = getAvailableCount(filter)
+
+  if available < requested then
+    return false, {
+      reason = "not_enough_items",
+      requested = requested,
+      available = available,
+      matchError = err,
+      meItem = meItem
+    }
+  end
+
+  local moved, exportErr = me.exportItem(filter, CFG.bridgeChestDirection)
+
+  if not moved or moved < requested then
+    return false, {
+      reason = "unexpected_partial_or_export_fail",
+      requested = requested,
+      moved = moved or 0,
+      err = exportErr
+    }
+  end
+
+  return true, {
+    moved = moved
+  }
+end
+
+-- ==================================================
+-- CORE FLOW
+-- ==================================================
+local function precheckME(filter)
+  local available, err, meItem = getAvailableCount(filter)
+
+  if available < (filter.count or 1) then
+    return false, {
+      reason = "not_enough_items",
+      requested = filter.count,
+      available = available,
+      matchError = err,
+      meItem = meItem
+    }
+  end
+
+  return true, {
+    available = available,
+    meItem = meItem
+  }
+end
+
+local function waitForCreateFeed(filter)
+  local ok, actual = waitForBuffer(filter, filter.count, CFG.bufferTimeout)
+  if not ok then
+    return false, {
+      reason = "buffer_timeout",
+      actual = actual,
+      expected = filter.count
+    }
+  end
+
+  return true, {
+    actual = actual
+  }
+end
+
+local function packOnePackage(filter, address)
+  local result = {
+    filter = filter,
+    address = address
+  }
+
+  -- 1) pre-check ME
+  do
+    local ok, data = precheckME(filter)
+    result.precheck = data
+    if not ok then
+      return false, result
+    end
+  end
+
+  -- 2) set address
+  do
+    local ok, addrRes = setPackagerAddress(address)
+    result.packagerAddress = addrRes
+    if not ok then
+      result.reason = addrRes
+      return false, result
+    end
+  end
+
+  -- 3) export from ME
+  do
+    local ok, data = exportIfEnough(filter)
+    result.export = data
+    if not ok then
+      return false, result
+    end
+  end
+
+  -- 4) wait buffer
+  do
+    local ok, data = waitForCreateFeed(filter)
+    result.buffer = data
+    if not ok then
+      return false, result
+    end
+  end
+
+  -- 5) wait for user confirmation that Create chain is ready
+  print("")
+  print("[INFO] Nech Create chain presunout item do packageru.")
+  print("       Az bude ready k zabalení, stiskni ENTER.")
+  read()
+
+  -- 6) make package
+  do
+    local ok, data = makePackage()
+    result.makePackage = data
+    if not ok then
+      result.reason = data
+      return false, result
+    end
+  end
+
+  -- 7) inspect on depot
+  do
+    local ok, data = readDepotPackage(address)
+    result.depot = data
+    if not ok then
+      result.reason = data
+      return false, result
+    end
+  end
+
+  -- 8) release via SR latch
+  do
+    local ok, data = releaseFromDepot()
+    result.release = data or true
+    if not ok then
+      result.reason = data
+      return false, result
+    end
+  end
+
+  return true, result
+end
+
+-- ==================================================
+-- UI / MAIN LOOP
+-- ==================================================
+local function printResult(ok, result)
+  printHeader(ok and "SUCCESS" or "FAIL")
+
+  print("Address: " .. tostring(result.address))
+  print("Filter:")
+  dump(result.filter)
+
+  if result.precheck then
+    print("Precheck:")
+    dump(result.precheck)
+  end
+
+  if result.export then
+    print("Export:")
+    dump(result.export)
+  end
+
+  if result.buffer then
+    print("Buffer:")
+    dump(result.buffer)
+  end
+
+  if result.depot then
+    print("Depot:")
+    dump({
+      address = result.depot.address,
+      contents = result.depot.contents
+    })
+  end
+
+  if not ok then
+    print("Reason:")
+    print(tostring(result.reason or "unknown"))
   end
 end
 
-print("")
-print("SUCCESS: Proof of concept probehl.")
+local function main()
+  while true do
+    printHeader("MASTER POC V3")
+
+    local filter, address = buildFilterFromPrompt()
+
+    print("")
+    print("Input summary:")
+    dump(filter)
+    print("Address: " .. tostring(address))
+
+    local ok, result = packOnePackage(filter, address)
+    printResult(ok, result)
+
+    print("")
+    local again = prompt("Spustit další test? (y/n)", "y")
+    if lower(again) ~= "y" then
+      break
+    end
+  end
+end
+
+main()
