@@ -1,33 +1,61 @@
 local ae = peripheral.wrap("me_bridge_0")
 
-local task = ae.craftItem({ name = "minecraft:iron_ingot", count = 64 })
+local f = fs.open("craft_debug.txt", "w")
 
-print("isDone:", task.isDone())
-print("isCanceled:", task.isCanceled())
-print("hasErrorOccurred:", task.hasErrorOccurred())
-print("isCalculationNotSuccessful:", task.isCalculationNotSuccessful())
-print("debug:", task.getDebugMessage())
-
-local req = task.getRequestedItem()
-print("requested type:", type(req))
-if type(req) == "table" then
-  print("requested:", textutils.serialise(req))
-else
-  print("requested:", tostring(req))
+local function log(...)
+  local parts = {}
+  for i = 1, select("#", ...) do
+    local v = select(i, ...)
+    parts[#parts + 1] = tostring(v)
+  end
+  f.writeLine(table.concat(parts, " "))
 end
 
-local out = task.getFinalOutput()
-print("output type:", type(out))
-if type(out) == "table" then
-  print("output:", textutils.serialise(out))
-else
-  print("output:", tostring(out))
+local function dumpValue(name, value)
+  log(name .. " type:", type(value))
+
+  if type(value) == "table" then
+    local ok, txt = pcall(textutils.serialise, value)
+    if ok then
+      log(name .. " value:", txt)
+    else
+      log(name .. " value: <cannot serialise>")
+    end
+  else
+    log(name .. " value:", tostring(value))
+  end
 end
 
-local missing = task.getMissingItems()
-print("missing type:", type(missing))
-if type(missing) == "table" then
-  print("missing:", textutils.serialise(missing))
-else
-  print("missing:", tostring(missing))
+local ok, task = pcall(function()
+  return ae.craftItem({ name = "minecraft:iron_ingot", count = 64 })
+end)
+
+log("pcall ok:", ok)
+dumpValue("task", task)
+
+if ok and task then
+  if task.isDone then log("isDone:", task.isDone()) end
+  if task.isCanceled then log("isCanceled:", task.isCanceled()) end
+  if task.hasErrorOccurred then log("hasErrorOccurred:", task.hasErrorOccurred()) end
+  if task.isCalculationNotSuccessful then log("isCalculationNotSuccessful:", task.isCalculationNotSuccessful()) end
+  if task.isCalculationStarted then log("isCalculationStarted:", task.isCalculationStarted()) end
+  if task.isCraftingStarted then log("isCraftingStarted:", task.isCraftingStarted()) end
+  if task.getDebugMessage then log("getDebugMessage:", task.getDebugMessage()) end
+
+  sleep(0.5)
+
+  if task.getRequestedItem then
+    dumpValue("requested", task.getRequestedItem())
+  end
+
+  if task.getFinalOutput then
+    dumpValue("output", task.getFinalOutput())
+  end
+
+  if task.getMissingItems then
+    dumpValue("missing", task.getMissingItems())
+  end
 end
+
+f.close()
+print("saved to craft_debug.txt")
