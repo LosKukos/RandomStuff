@@ -1,9 +1,33 @@
-local ok, a, b, c, d = pcall(function()
-  return ae.craftItem({ name = "minecraft:iron_ingot", count = 64 })
-end)
+local ae = peripheral.wrap("me_bridge_0")
 
-print("ok:", ok)
-print("a:", type(a), type(a) == "table" and textutils.serialise(a) or tostring(a))
-print("b:", type(b), type(b) == "table" and textutils.serialise(b) or tostring(b))
-print("c:", type(c), type(c) == "table" and textutils.serialise(c) or tostring(c))
-print("d:", type(d), type(d) == "table" and textutils.serialise(d) or tostring(d))
+local task = ae.craftItem({ name = "minecraft:iron_ingot", count = 64 })
+
+print("isDone:", task.isDone())
+print("isCanceled:", task.isCanceled())
+print("hasErrorOccurred:", task.hasErrorOccurred())
+print("isCalculationNotSuccessful:", task.isCalculationNotSuccessful())
+print("debug:", task.getDebugMessage())
+
+local req = task.getRequestedItem()
+print("requested type:", type(req))
+if type(req) == "table" then
+  print("requested:", textutils.serialise(req))
+else
+  print("requested:", tostring(req))
+end
+
+local out = task.getFinalOutput()
+print("output type:", type(out))
+if type(out) == "table" then
+  print("output:", textutils.serialise(out))
+else
+  print("output:", tostring(out))
+end
+
+local missing = task.getMissingItems()
+print("missing type:", type(missing))
+if type(missing) == "table" then
+  print("missing:", textutils.serialise(missing))
+else
+  print("missing:", tostring(missing))
+end
