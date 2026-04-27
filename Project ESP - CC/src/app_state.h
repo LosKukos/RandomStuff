@@ -29,10 +29,46 @@ struct Command {
   uint32_t updated;
 };
 
+struct OrderItem {
+  String name;
+  int count = 0;
+  String nbt;
+  String fingerprint;
+};
+
+struct OrderRecord {
+  String orderId;
+  String status;
+  String destination;
+  String deliveryMode;
+  String recipient;
+  uint32_t created = 0;
+  uint32_t updated = 0;
+  std::vector<OrderItem> items;
+};
+
+struct PackageRecord {
+  String packageId;
+  String orderId;
+  String address;
+  String destination;
+  String deliveryMode;
+  String recipient;
+  String status;
+  uint32_t created = 0;
+  uint32_t updated = 0;
+  String contentsJson;
+  String filterJson;
+};
+
 extern std::vector<Command> commandQueue;
+extern std::vector<OrderRecord> orders;
+extern std::vector<PackageRecord> packages;
 
 extern String meStorage;
 extern uint32_t meLastUpdate;
 
 extern bool queueDirty;
 extern bool meDirty;
+extern bool ordersDirty;
+extern bool packagesDirty;

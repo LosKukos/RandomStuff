@@ -6,3 +6,7 @@ void saveQueue();
 void loadQueue();
 void saveME();
 void loadME();
+void saveOrders();
+void loadOrders();
+void savePackages();
+void loadPackages();

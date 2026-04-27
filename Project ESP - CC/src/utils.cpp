@@ -1,6 +1,7 @@
 #include "utils.h"
 #include "app_state.h"
 #include <Arduino.h>
+#include <WiFi.h>
 
 void addLog(const String& msg) {
   Serial.println(msg);
@@ -16,6 +17,12 @@ String genId() {
   return "cmd_" + String(millis()) + "_" + String(counter);
 }
 
+String genOrderId() {
+  static uint32_t orderCounter = 0;
+  orderCounter++;
+  return "ORD" + String(millis()) + "_" + String(orderCounter);
+}
+
 bool isSTA(AsyncWebServerRequest* req) {
   return req->client()->localIP() == WiFi.localIP();
 }
@@ -24,8 +31,29 @@ bool isAP(AsyncWebServerRequest* req) {
   return req->client()->localIP() == WiFi.softAPIP();
 }
 
+Command* findCommandById(const String& id) {
+  for (auto& cmd : commandQueue) {
+    if (cmd.id == id) return &cmd;
+  }
+  return nullptr;
+}
+
+OrderRecord* findOrderById(const String& orderId) {
+  for (auto& order : orders) {
+    if (order.orderId == orderId) return &order;
+  }
+  return nullptr;
+}
+
+PackageRecord* findPackageById(const String& packageId) {
+  for (auto& pkg : packages) {
+    if (pkg.packageId == packageId) return &pkg;
+  }
+  return nullptr;
+}
+
 String makeOkResponse(std::function<void(JsonObject)> fill) {
-  StaticJsonDocument<1024> doc;
+  StaticJsonDocument<4096> doc;
   doc["ok"] = true;
   JsonObject data = doc.createNestedObject("data");
   fill(data);

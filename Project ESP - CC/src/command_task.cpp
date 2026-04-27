@@ -9,6 +9,8 @@ void commandTask(void* pvParameters) {
 
   uint32_t lastQueueSave = 0;
   uint32_t lastMeSave = 0;
+  uint32_t lastOrdersSave = 0;
+  uint32_t lastPackagesSave = 0;
 
   for (;;) {
     uint32_t now = millis();
@@ -50,6 +52,16 @@ void commandTask(void* pvParameters) {
     if (meDirty && (now - lastMeSave > 5000)) {
       saveME();
       lastMeSave = now;
+    }
+
+    if (ordersDirty && (now - lastOrdersSave > 2000)) {
+      saveOrders();
+      lastOrdersSave = now;
+    }
+
+    if (packagesDirty && (now - lastPackagesSave > 2000)) {
+      savePackages();
+      lastPackagesSave = now;
     }
 
     vTaskDelay(pdMS_TO_TICKS(200));

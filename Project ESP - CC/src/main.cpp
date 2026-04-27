@@ -20,6 +20,8 @@ void setup() {
   loadConfig();
   loadQueue();
   loadME();
+  loadOrders();
+  loadPackages();
 
   xTaskCreatePinnedToCore(
     wifiTask,
@@ -34,7 +36,7 @@ void setup() {
   xTaskCreatePinnedToCore(
     webTask,
     "webTask",
-    8192,
+    12288,
     nullptr,
     1,
     &webTaskHandle,
@@ -44,7 +46,7 @@ void setup() {
   xTaskCreatePinnedToCore(
     commandTask,
     "commandTask",
-    6144,
+    8192,
     nullptr,
     1,
     &commandTaskHandle,

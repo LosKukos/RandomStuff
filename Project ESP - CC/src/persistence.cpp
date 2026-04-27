@@ -1,6 +1,7 @@
 #include "persistence.h"
 #include "app_state.h"
 #include "utils.h"
+#include "orders.h"
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 
@@ -159,4 +160,162 @@ void loadME() {
   meStorage = f.readString();
   f.close();
   addLog("[FS] me cache loaded");
+}
+
+void saveOrders() {
+  StaticJsonDocument<24576> doc;
+  JsonArray arr = doc.to<JsonArray>();
+
+  for (const auto& order : orders) {
+    JsonObject o = arr.createNestedObject();
+    serializeOrder(o, order);
+  }
+
+  File f = LittleFS.open("/orders.json", "w");
+  if (!f) {
+    addLog("[FS] failed to open /orders.json for write");
+    return;
+  }
+
+  serializeJson(doc, f);
+  f.close();
+  ordersDirty = false;
+  addLog("[FS] orders saved");
+}
+
+void loadOrders() {
+  if (!LittleFS.exists("/orders.json")) {
+    addLog("[FS] orders.json not found");
+    return;
+  }
+
+  File f = LittleFS.open("/orders.json", "r");
+  if (!f) {
+    addLog("[FS] failed to open /orders.json for read");
+    return;
+  }
+
+  if (f.size() == 0) {
+    addLog("[FS] orders.json empty");
+    f.close();
+    return;
+  }
+
+  StaticJsonDocument<24576> doc;
+  DeserializationError err = deserializeJson(doc, f);
+  f.close();
+
+  if (err) {
+    addLog("[FS] orders.json parse failed");
+    return;
+  }
+
+  orders.clear();
+
+  for (JsonObject o : doc.as<JsonArray>()) {
+    OrderRecord order;
+    order.orderId = o["orderId"] | "";
+    order.status = o["status"] | "pending";
+    order.destination = o["destination"] | "";
+    order.deliveryMode = o["deliveryMode"] | "";
+    order.recipient = o["recipient"] | "";
+    order.created = o["created"] | 0;
+    order.updated = o["updated"] | 0;
+
+    for (JsonObject itemObj : o["items"].as<JsonArray>()) {
+      OrderItem item;
+      item.name = itemObj["name"] | "";
+      item.count = itemObj["count"] | 0;
+      item.nbt = itemObj["nbt"] | "";
+      item.fingerprint = itemObj["fingerprint"] | "";
+      order.items.push_back(item);
+    }
+
+    if (!order.orderId.isEmpty()) {
+      orders.push_back(order);
+    }
+  }
+
+  addLog("[FS] orders loaded");
+}
+
+void savePackages() {
+  StaticJsonDocument<24576> doc;
+  JsonArray arr = doc.to<JsonArray>();
+
+  for (const auto& pkg : packages) {
+    JsonObject o = arr.createNestedObject();
+    o["packageId"] = pkg.packageId;
+    o["orderId"] = pkg.orderId;
+    o["address"] = pkg.address;
+    o["destination"] = pkg.destination;
+    o["deliveryMode"] = pkg.deliveryMode;
+    o["recipient"] = pkg.recipient;
+    o["status"] = pkg.status;
+    o["created"] = pkg.created;
+    o["updated"] = pkg.updated;
+    o["contentsJson"] = pkg.contentsJson;
+    o["filterJson"] = pkg.filterJson;
+  }
+
+  File f = LittleFS.open("/packages.json", "w");
+  if (!f) {
+    addLog("[FS] failed to open /packages.json for write");
+    return;
+  }
+
+  serializeJson(doc, f);
+  f.close();
+  packagesDirty = false;
+  addLog("[FS] packages saved");
+}
+
+void loadPackages() {
+  if (!LittleFS.exists("/packages.json")) {
+    addLog("[FS] packages.json not found");
+    return;
+  }
+
+  File f = LittleFS.open("/packages.json", "r");
+  if (!f) {
+    addLog("[FS] failed to open /packages.json for read");
+    return;
+  }
+
+  if (f.size() == 0) {
+    addLog("[FS] packages.json empty");
+    f.close();
+    return;
+  }
+
+  StaticJsonDocument<24576> doc;
+  DeserializationError err = deserializeJson(doc, f);
+  f.close();
+
+  if (err) {
+    addLog("[FS] packages.json parse failed");
+    return;
+  }
+
+  packages.clear();
+
+  for (JsonObject o : doc.as<JsonArray>()) {
+    PackageRecord pkg;
+    pkg.packageId = o["packageId"] | "";
+    pkg.orderId = o["orderId"] | "";
+    pkg.address = o["address"] | "";
+    pkg.destination = o["destination"] | "";
+    pkg.deliveryMode = o["deliveryMode"] | "";
+    pkg.recipient = o["recipient"] | "";
+    pkg.status = o["status"] | "packed";
+    pkg.created = o["created"] | 0;
+    pkg.updated = o["updated"] | 0;
+    pkg.contentsJson = o["contentsJson"] | "[]";
+    pkg.filterJson = o["filterJson"] | "{}";
+    if (!pkg.packageId.isEmpty()) {
+      packages.push_back(pkg);
+    }
+  }
+
+  addLog("[FS] packages loaded");
 }
