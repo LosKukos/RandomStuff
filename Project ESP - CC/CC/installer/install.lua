@@ -1,16 +1,24 @@
 -- installer/install.lua
 -- CC installer for Project ESP - CC
--- Installs either master or node package from GitHub into the current ComputerCraft computer.
+-- Installs either master or node package from GitHub into this ComputerCraft computer.
+--
+-- v1.1.0
+-- - Node ID is no longer configured manually.
+-- - ESP assigns nodeId on first registration.
+-- - node_state.json stays local on the CC computer.
+-- - Installs code into axis/master or axis/node and creates root runners: master / node.
 
-local INSTALLER_VERSION = "1.0.0"
+local INSTALLER_VERSION = "1.1.0"
 
 local BASE_RAW = "https://raw.githubusercontent.com/LosKukos/RandomStuff/main/Project%20ESP%20-%20CC/CC"
+local INSTALL_ROOT = "axis"
 
 local PACKAGES = {
   master = {
     label = "Master - factory order fulfillment",
     sourceDir = "master",
-    targetDir = "master",
+    targetDir = fs.combine(INSTALL_ROOT, "master"),
+    runnerName = "master",
     entry = "master.lua",
     files = {
       "config.lua",
@@ -25,7 +33,8 @@ local PACKAGES = {
   node = {
     label = "Node - dumb package checkpoint",
     sourceDir = "node",
-    targetDir = "node",
+    targetDir = fs.combine(INSTALL_ROOT, "node"),
+    runnerName = "node",
     entry = "node.lua",
     files = {
       "config.lua",
@@ -43,12 +52,6 @@ local function header(title)
   print(("="):rep(48))
   print(title)
   print(("="):rep(48))
-end
-
-local function pause()
-  print("")
-  write("Press ENTER to continue...")
-  read()
 end
 
 local function trim(s)
@@ -74,9 +77,11 @@ local function askBool(prompt, default)
   while true do
     write(prompt .. " (" .. suffix .. "): ")
     local v = trim(read()):lower()
+
     if v == "" then return default end
     if v == "y" or v == "yes" or v == "j" or v == "jo" then return true end
     if v == "n" or v == "no" or v == "ne" then return false end
+
     print("Please answer y/n. Ano, lidská řeč je těžká.")
   end
 end
@@ -103,6 +108,11 @@ local function download(url)
 
   local body = res.readAll()
   res.close()
+
+  if not body or body == "" then
+    return nil, "empty_response"
+  end
+
   return body
 end
 
@@ -110,16 +120,37 @@ local function ensureDir(path)
   if fs.exists(path) and not fs.isDir(path) then
     error("Target exists but is not a directory: " .. path)
   end
-  if not fs.exists(path) then
-    fs.makeDir(path)
+
+  if fs.exists(path) then return end
+
+  local parts = {}
+  for part in string.gmatch(path, "[^/]+") do
+    table.insert(parts, part)
+  end
+
+  local current = ""
+  for _, part in ipairs(parts) do
+    current = current == "" and part or fs.combine(current, part)
+    if fs.exists(current) and not fs.isDir(current) then
+      error("Path component exists but is not a directory: " .. current)
+    end
+    if not fs.exists(current) then
+      fs.makeDir(current)
+    end
   end
 end
 
 local function writeFile(path, content)
+  local dir = fs.getDir(path)
+  if dir and dir ~= "" then
+    ensureDir(dir)
+  end
+
   local f = fs.open(path, "w")
   if not f then
     error("Could not write file: " .. path)
   end
+
   f.write(content)
   f.close()
 end
@@ -127,9 +158,32 @@ end
 local function readFile(path)
   local f = fs.open(path, "r")
   if not f then return nil end
+
   local data = f.readAll()
   f.close()
+
   return data
+end
+
+local function patchStringField(content, key, value)
+  local replacement = key .. " = " .. string.format("%q", tostring(value)) .. ","
+  local updated, count = content:gsub(key .. "%s*=%s*\"[^\"]*\"%s*,", replacement)
+
+  if count == 0 then
+    updated, count = content:gsub(key .. "%s*=%s*'[^']*'%s*,", replacement)
+  end
+
+  return updated
+end
+
+local function patchNumberField(content, key, value)
+  local replacement = key .. " = " .. tostring(value) .. ","
+  return (content:gsub(key .. "%s*=%s*[%d%.]+%s*,", replacement))
+end
+
+local function patchBoolField(content, key, value)
+  local replacement = key .. " = " .. tostring(value) .. ","
+  return (content:gsub(key .. "%s*=%s*[%a]+%s*,", replacement))
 end
 
 local function downloadPackage(pkg)
@@ -164,8 +218,7 @@ local function patchConfigMaster(path, values)
   }
 
   for key, value in pairs(replacements) do
-    content = content:gsub(key .. "%s*=%s*" .. string.format("%q", "") .. ",", key .. " = " .. string.format("%q", value) .. ",")
-    content = content:gsub(key .. "%s*=%s*" .. '"[^"]*"' .. ",", key .. " = " .. string.format("%q", value) .. ",")
+    content = patchStringField(content, key, value)
   end
 
   writeFile(path, content)
@@ -176,8 +229,8 @@ local function patchConfigNode(path, values)
   if not content then error("Missing config: " .. path) end
 
   local stringReplacements = {
-    nodeId = values.nodeId,
     nodeName = values.nodeName,
+    stateFile = values.stateFile,
     scanner = values.scanner,
     releaseSide = values.releaseSide,
     espBase = values.espBase,
@@ -185,23 +238,37 @@ local function patchConfigNode(path, values)
   }
 
   for key, value in pairs(stringReplacements) do
-    content = content:gsub(key .. "%s*=%s*" .. '"[^"]*"' .. ",", key .. " = " .. string.format("%q", value) .. ",")
+    content = patchStringField(content, key, value)
   end
 
-  content = content:gsub("releaseEnabled%s*=%s*[%a]+,", "releaseEnabled = " .. tostring(values.releaseEnabled) .. ",")
-  content = content:gsub("releasePulse%s*=%s*[%d%.]+,", "releasePulse = " .. tostring(values.releasePulse) .. ",")
-  content = content:gsub("poll%s*=%s*[%d%.]+,", "poll = " .. tostring(values.poll) .. ",")
-  content = content:gsub("debounceSeconds%s*=%s*[%d%.]+,", "debounceSeconds = " .. tostring(values.debounceSeconds) .. ",")
-  content = content:gsub("verboseDebounce%s*=%s*[%a]+,", "verboseDebounce = " .. tostring(values.verboseDebounce) .. ",")
+  content = patchBoolField(content, "releaseEnabled", values.releaseEnabled)
+  content = patchNumberField(content, "releasePulse", values.releasePulse)
+  content = patchNumberField(content, "poll", values.poll)
+  content = patchNumberField(content, "debounceSeconds", values.debounceSeconds)
+  content = patchNumberField(content, "heartbeatSeconds", values.heartbeatSeconds)
+  content = patchBoolField(content, "verboseDebounce", values.verboseDebounce)
 
   writeFile(path, content)
 end
 
 local function createRunner(pkg)
-  local runnerName = pkg.targetDir
+  local runnerName = pkg.runnerName
+
+  if fs.exists(runnerName) and fs.isDir(runnerName) then
+    error("Cannot create runner '" .. runnerName .. "' because a directory with that name exists. Remove/rename it first.")
+  end
+
+  local targetDir = pkg.targetDir
+  local entry = pkg.entry
+
   local script = table.concat({
-    "shell.run(" .. string.format("%q", fs.combine(pkg.targetDir, pkg.entry)) .. ")"
+    "local oldDir = shell.dir()",
+    "shell.setDir(" .. string.format("%q", targetDir) .. ")",
+    "local ok, err = pcall(function() shell.run(" .. string.format("%q", entry) .. ") end)",
+    "shell.setDir(oldDir)",
+    "if not ok then error(err, 0) end",
   }, "\n") .. "\n"
+
   writeFile(runnerName, script)
   print("[OK] Created runner: " .. runnerName)
 end
@@ -229,8 +296,8 @@ local function configureNode(pkg)
 
   local values = {
     espBase = ask("ESP base URL", "http://10.0.1.17"),
-    nodeId = ask("Node ID", "node_1"),
     nodeName = ask("Node display name", "Node 1"),
+    stateFile = ask("Node state file", "node_state.json"),
     scanner = ask("Scanner/depot peripheral", "create:depot_0"),
     event = ask("Event name", "pass"),
     releaseEnabled = releaseEnabled,
@@ -238,6 +305,7 @@ local function configureNode(pkg)
     releasePulse = tonumber(ask("Release pulse seconds", "0.15")) or 0.15,
     poll = tonumber(ask("Poll interval seconds", "0.10")) or 0.10,
     debounceSeconds = tonumber(ask("Debounce seconds", "2.0")) or 2.0,
+    heartbeatSeconds = tonumber(ask("Heartbeat seconds", "60")) or 60,
     verboseDebounce = askBool("Print debounce skips?", false),
   }
 
@@ -252,9 +320,12 @@ local function choosePackage()
 
   while true do
     local choice = ask("Choose install target", "1")
-    if choice == "1" or choice:lower() == "master" then return PACKAGES.master end
-    if choice == "2" or choice:lower() == "node" then return PACKAGES.node end
-    if choice == "3" or choice:lower() == "exit" then return nil end
+    local lowered = choice:lower()
+
+    if choice == "1" or lowered == "master" then return PACKAGES.master end
+    if choice == "2" or lowered == "node" then return PACKAGES.node end
+    if choice == "3" or lowered == "exit" then return nil end
+
     print("Invalid choice. Try again, state-of-the-art human interface.")
   end
 end
@@ -294,12 +365,17 @@ local function main()
 
   header("Done")
   print("Installed: " .. pkg.label)
-  print("Run with:")
+  print("Files installed into:")
   print("  " .. pkg.targetDir)
   print("")
-  print("Or manually:")
-  print("  cd " .. pkg.targetDir)
-  print("  " .. pkg.entry:gsub("%.lua$", ""))
+  print("Run with:")
+  print("  " .. pkg.runnerName)
+  print("")
+  if pkg == PACKAGES.node then
+    print("Note:")
+    print("  ESP assigns nodeId on first start.")
+    print("  " .. fs.combine(pkg.targetDir, "node_state.json") .. " is local runtime state, do not commit it.")
+  end
 end
 
 local ok, err = pcall(main)

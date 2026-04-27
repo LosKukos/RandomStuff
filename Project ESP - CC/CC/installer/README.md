@@ -1,53 +1,53 @@
-# CC Installer
+# Project ESP - CC Installer
 
-ComputerCraft installer for Project ESP - CC.
+Installs either the CC Master or the CC Node package from GitHub.
 
-## Git location
+## Install location
 
-Put this folder here:
-
-```txt
-Project ESP - CC/CC/installer/
-```
-
-## Files
+The installer writes files into:
 
 ```txt
-install.lua
-README.md
+axis/master/
+axis/node/
 ```
 
-## Usage on a fresh CC computer
-
-Download `install.lua` to the CC computer and run:
-
-```lua
-install
-```
-
-The installer will ask whether to install:
-
-- `master` - factory/order fulfillment computer
-- `node` - dumb package checkpoint sensor
-
-It downloads files from:
+and creates root runners:
 
 ```txt
-https://raw.githubusercontent.com/LosKukos/RandomStuff/main/Project%20ESP%20-%20CC/CC
+master
+node
 ```
 
-Then it patches the local `config.lua` based on your answers and creates a runner:
+Run with:
 
 ```lua
 master
 ```
 
-or
+or:
 
 ```lua
 node
 ```
 
-## Requirements
+## Node identity
 
-ComputerCraft HTTP API must be enabled.
+Node identity is assigned by ESP on first startup.
+
+The node stores its assigned ID locally in:
+
+```txt
+axis/node/node_state.json
+```
+
+Do **not** commit `node_state.json` to Git. That file is runtime state for one specific CC computer.
+
+## Usage
+
+Download `install.lua` to a ComputerCraft computer and run:
+
+```lua
+install
+```
+
+HTTP must be enabled in ComputerCraft.
