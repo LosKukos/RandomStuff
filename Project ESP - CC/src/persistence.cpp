@@ -3,6 +3,7 @@
 #include "utils.h"
 #include "orders.h"
 #include "packages.h"
+#include "nodes.h"
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 
@@ -222,4 +223,53 @@ void loadPackages() {
     packages.push_back(pkg);
   }
   addLog("[FS] packages loaded");
+}
+
+void saveNodes() {
+  DynamicJsonDocument doc(12288);
+  JsonArray arr = doc.to<JsonArray>();
+
+  for (const auto& node : nodes) {
+    JsonObject o = arr.createNestedObject();
+    o["nodeId"] = node.nodeId;
+    o["nodeName"] = node.nodeName;
+    o["created"] = node.created;
+    o["updated"] = node.updated;
+    o["lastSeenMs"] = node.lastSeenMs;
+    o["lastSeenIso"] = node.lastSeenIso;
+    o["lastSeenLabel"] = node.lastSeenLabel;
+  }
+
+  File f = LittleFS.open("/nodes.json", "w");
+  if (!f) { addLog("[FS] failed to open /nodes.json for write"); return; }
+  serializeJson(doc, f);
+  f.close();
+  nodesDirty = false;
+  addLog("[FS] nodes saved");
+}
+
+void loadNodes() {
+  if (!LittleFS.exists("/nodes.json")) { addLog("[FS] nodes.json not found"); return; }
+  File f = LittleFS.open("/nodes.json", "r");
+  if (!f) { addLog("[FS] failed to open /nodes.json for read"); return; }
+  if (f.size() == 0) { addLog("[FS] nodes.json empty"); f.close(); return; }
+
+  DynamicJsonDocument doc(12288);
+  DeserializationError err = deserializeJson(doc, f);
+  f.close();
+  if (err) { addLog("[FS] nodes.json parse failed"); return; }
+
+  nodes.clear();
+  for (JsonObject o : doc.as<JsonArray>()) {
+    NodeRecord node;
+    node.nodeId = o["nodeId"] | "";
+    node.nodeName = o["nodeName"] | "";
+    node.created = o["created"] | 0;
+    node.updated = o["updated"] | 0;
+    node.lastSeenMs = o["lastSeenMs"] | 0;
+    node.lastSeenIso = o["lastSeenIso"] | "";
+    node.lastSeenLabel = o["lastSeenLabel"] | "";
+    if (!node.nodeId.isEmpty()) nodes.push_back(node);
+  }
+  addLog("[FS] nodes loaded");
 }

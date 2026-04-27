@@ -5,6 +5,7 @@
 #include "persistence.h"
 #include "orders.h"
 #include "packages.h"
+#include "nodes.h"
 #include "time_service.h"
 #include <LittleFS.h>
 #include <ArduinoJson.h>
@@ -88,6 +89,7 @@ void setupWeb() {
       data["queue"] = commandQueue.size();
       data["orders"] = orders.size();
       data["packages"] = packages.size();
+      data["nodes"] = nodes.size();
       data["me_age"] = meLastUpdate == 0 ? -1 : (int32_t)(millis() - meLastUpdate);
       data["time_synced"] = t.synced;
       data["time_label"] = t.label;
@@ -117,6 +119,7 @@ void setupWeb() {
       data["queue"] = commandQueue.size();
       data["orders"] = orders.size();
       data["packages"] = packages.size();
+      data["nodes"] = nodes.size();
       data["me_age"] = meLastUpdate == 0 ? -1 : (int32_t)(millis() - meLastUpdate);
       data["time_synced"] = t.synced;
       data["time_label"] = t.label;
@@ -252,6 +255,100 @@ void setupWeb() {
   server.on("/api/me/list", HTTP_GET, [](AsyncWebServerRequest* req) {
     if (!isSTA(req)) { sendJson(req, 403, makeErrorResponse("sta_only")); return; }
     sendJson(req, 200, meStorage);
+  });
+
+  server.on("/api/node/register", HTTP_POST,
+    [](AsyncWebServerRequest* req) {},
+    nullptr,
+    [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+      (void)index; (void)total;
+      if (!isSTA(req)) { sendJson(req, 403, makeErrorResponse("sta_only")); return; }
+
+      String body = readBody(data, len);
+      DynamicJsonDocument doc(1024);
+      if (deserializeJson(doc, body)) { sendJson(req, 400, makeErrorResponse("invalid_json")); return; }
+
+      NodeRecord node;
+      bool existed = false;
+      String err;
+      if (!registerNodeFromJson(doc, node, existed, err)) {
+        sendJson(req, 400, makeErrorResponse(err.c_str()));
+        return;
+      }
+
+      if (existed) {
+        NodeRecord* existing = findNodeById(node.nodeId);
+        if (existing) *existing = node;
+      } else {
+        nodes.push_back(node);
+      }
+
+      nodesDirty = true;
+      addLog(String("[NODE] ") + (existed ? "registered existing " : "registered new ") + node.nodeId + " " + node.nodeName);
+
+      StaticJsonDocument<512> evt;
+      evt["event"] = "node_registered";
+      evt["nodeId"] = node.nodeId;
+      evt["nodeName"] = node.nodeName;
+      evt["existed"] = existed;
+      String wsOut;
+      serializeJson(evt, wsOut);
+      ws.textAll(wsOut);
+
+      sendJson(req, 200, makeOkResponse([&](JsonObject data) {
+        data["nodeId"] = node.nodeId;
+        data["nodeName"] = node.nodeName;
+        data["existed"] = existed;
+        data["lastSeenLabel"] = node.lastSeenLabel;
+        data["lastSeenIso"] = node.lastSeenIso;
+      }));
+    }
+  );
+
+  server.on("/api/node/heartbeat", HTTP_POST,
+    [](AsyncWebServerRequest* req) {},
+    nullptr,
+    [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+      (void)index; (void)total;
+      if (!isSTA(req)) { sendJson(req, 403, makeErrorResponse("sta_only")); return; }
+
+      String body = readBody(data, len);
+      DynamicJsonDocument doc(1024);
+      if (deserializeJson(doc, body)) { sendJson(req, 400, makeErrorResponse("invalid_json")); return; }
+
+      NodeRecord* node = nullptr;
+      String err;
+      if (!heartbeatNodeFromJson(doc, node, err)) {
+        sendJson(req, 404, makeErrorResponse(err.c_str()));
+        return;
+      }
+
+      nodesDirty = true;
+      sendJson(req, 200, makeOkResponse([&](JsonObject data) {
+        data["nodeId"] = node->nodeId;
+        data["nodeName"] = node->nodeName;
+        data["lastSeenLabel"] = node->lastSeenLabel;
+        data["lastSeenIso"] = node->lastSeenIso;
+      }));
+    }
+  );
+
+  server.on("/api/nodes/list", HTTP_GET, [](AsyncWebServerRequest* req) {
+    if (!isSTA(req)) { sendJson(req, 403, makeErrorResponse("sta_only")); return; }
+
+    DynamicJsonDocument doc(12288);
+    doc["ok"] = true;
+    JsonObject dataObj = doc.createNestedObject("data");
+    JsonArray arr = dataObj.createNestedArray("nodes");
+
+    for (const auto& node : nodes) {
+      JsonObject o = arr.createNestedObject();
+      serializeNode(o, node);
+    }
+
+    String out;
+    serializeJson(doc, out);
+    sendJson(req, 200, out);
   });
 
   server.on("/api/orders/create", HTTP_POST,
@@ -440,7 +537,6 @@ void setupWeb() {
 
       String packageId = doc["packageId"] | "";
       String nodeId = doc["nodeId"] | "";
-      String nodeName = doc["nodeName"] | "";
       String eventName = doc["event"] | "pass";
 
       if (packageId.isEmpty() || nodeId.isEmpty()) {
@@ -454,21 +550,30 @@ void setupWeb() {
         return;
       }
 
+      NodeRecord* node = findNodeById(nodeId);
+      if (!node) {
+        sendJson(req, 404, makeErrorResponse("node_not_found"));
+        return;
+      }
+
+      touchNode(*node);
+      nodesDirty = true;
+
       String err;
-      if (!appendPackageEvent(*pkg, nodeId, nodeName, eventName, err)) {
+      if (!appendPackageEvent(*pkg, node->nodeId, node->nodeName, eventName, err)) {
         sendJson(req, 500, makeErrorResponse(err.c_str()));
         return;
       }
 
       packagesDirty = true;
-      addLog("[PKG] event " + packageId + " @ " + nodeId + " " + pkg->lastSeenLabel);
+      addLog("[PKG] event " + packageId + " @ " + node->nodeId + " " + pkg->lastSeenLabel);
 
       StaticJsonDocument<1024> evt;
       evt["event"] = "package_event";
       evt["packageId"] = packageId;
       evt["orderId"] = pkg->orderId;
-      evt["nodeId"] = nodeId;
-      if (!nodeName.isEmpty()) evt["nodeName"] = nodeName;
+      evt["nodeId"] = node->nodeId;
+      evt["nodeName"] = node->nodeName;
       evt["packageEvent"] = eventName;
       evt["status"] = pkg->status;
       evt["timeLabel"] = pkg->lastSeenLabel;
@@ -480,8 +585,8 @@ void setupWeb() {
       sendJson(req, 200, makeOkResponse([&](JsonObject data) {
         data["packageId"] = packageId;
         data["orderId"] = pkg->orderId;
-        data["nodeId"] = nodeId;
-        if (!nodeName.isEmpty()) data["nodeName"] = nodeName;
+        data["nodeId"] = node->nodeId;
+        data["nodeName"] = node->nodeName;
         data["event"] = eventName;
         data["status"] = pkg->status;
         data["timeLabel"] = pkg->lastSeenLabel;

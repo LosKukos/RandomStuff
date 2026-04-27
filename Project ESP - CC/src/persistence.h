@@ -10,3 +10,5 @@ void saveOrders();
 void loadOrders();
 void savePackages();
 void loadPackages();
+void saveNodes();
+void loadNodes();

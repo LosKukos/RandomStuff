@@ -1,8 +1,10 @@
 local CFG = {
-  -- Unique checkpoint identity.
-  -- Keep this stable, because ESP will use it for package route history.
-  nodeId = "node_1",
+  -- Human-readable checkpoint name.
+  -- ESP will assign a stable nodeId automatically on first registration.
   nodeName = "Node 1",
+
+  -- Local file used to remember the ESP-assigned nodeId.
+  stateFile = "node_state.json",
 
   -- Peripheral holding/scanning the package briefly.
   -- Example: "create:depot_0" or side name like "front".
@@ -21,6 +23,7 @@ local CFG = {
   event = "pass",
   poll = 0.10,
   debounceSeconds = 2.0,
+  heartbeatSeconds = 60,
 
   -- If true, prints successful repeated scan ignores.
   verboseDebounce = false,

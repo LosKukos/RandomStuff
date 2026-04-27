@@ -15,6 +15,7 @@ std::vector<String> logs;
 std::vector<Command> commandQueue;
 std::vector<OrderRecord> orders;
 std::vector<PackageRecord> packages;
+std::vector<NodeRecord> nodes;
 
 String meStorage = R"({"items":[]})";
 uint32_t meLastUpdate = 0;
@@ -23,3 +24,4 @@ bool queueDirty = false;
 bool meDirty = false;
 bool ordersDirty = false;
 bool packagesDirty = false;
+bool nodesDirty = false;

@@ -37,11 +37,29 @@ local function postJson(path, payload)
   return true, data
 end
 
-function M.reportPackagePass(packageId)
+function M.registerNode(nodeId)
+  local payload = {
+    nodeName = CFG.nodeName
+  }
+
+  if nodeId and nodeId ~= "" then
+    payload.nodeId = nodeId
+  end
+
+  return postJson("/api/node/register", payload)
+end
+
+function M.heartbeatNode(nodeId)
+  return postJson("/api/node/heartbeat", {
+    nodeId = nodeId,
+    nodeName = CFG.nodeName
+  })
+end
+
+function M.reportPackagePass(nodeId, packageId)
   return postJson("/api/package/event", {
     packageId = packageId,
-    nodeId = CFG.nodeId,
-    nodeName = CFG.nodeName,
+    nodeId = nodeId,
     event = CFG.event or "pass"
   })
 end

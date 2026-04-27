@@ -70,9 +70,20 @@ struct PackageRecord {
   String historyJson;
 };
 
+struct NodeRecord {
+  String nodeId;
+  String nodeName;
+  uint32_t created = 0;
+  uint32_t updated = 0;
+  uint32_t lastSeenMs = 0;
+  String lastSeenIso;
+  String lastSeenLabel;
+};
+
 extern std::vector<Command> commandQueue;
 extern std::vector<OrderRecord> orders;
 extern std::vector<PackageRecord> packages;
+extern std::vector<NodeRecord> nodes;
 
 extern String meStorage;
 extern uint32_t meLastUpdate;
@@ -81,3 +92,4 @@ extern bool queueDirty;
 extern bool meDirty;
 extern bool ordersDirty;
 extern bool packagesDirty;
+extern bool nodesDirty;

@@ -1,66 +1,34 @@
 # CC Package Node
 
-Primitive checkpoint node for package tracking.
+This is a dumb package checkpoint.
 
-It does not decide routing. It only reports:
+It does not decide destination or arrival. It only reports:
 
-```json
-{
-  "packageId": "ORDxxxx|P01",
-  "nodeId": "node_1",
-  "nodeName": "Node 1",
-  "event": "pass"
-}
+```txt
+Package X passed through node Y.
 ```
 
-ESP is expected to assign real RTC/NTP time and store the route event.
+## First start
 
-## Files
-
-- `config.lua` - node identity, scanner peripheral, ESP URL
-- `util.lua` - helpers
-- `esp.lua` - HTTP client
-- `scanner.lua` - package address reading from depot/scanner peripheral
-- `node.lua` - main loop
-
-## Install location in Git
-
-Recommended:
-
-```text
-Project ESP - CC/CC/node/
-  config.lua
-  util.lua
-  esp.lua
-  scanner.lua
-  node.lua
-```
-
-On the ComputerCraft computer, keep all `.lua` files in the same folder and run:
+Run:
 
 ```lua
 node
 ```
 
-or:
+The node registers itself with ESP using `nodeName`. ESP returns a stable `nodeId`, which is stored in `node_state.json`.
 
-```lua
-shell.run("node/node.lua")
-```
+## Files
 
-## Required ESP endpoint
+- `config.lua` - local node config
+- `node.lua` - main loop
+- `esp.lua` - HTTP API wrapper
+- `scanner.lua` - package scanner
+- `util.lua` - helpers
+- `node_state.json` - generated locally, do not commit per-machine copies
 
-`POST /api/package/event`
+## ESP API used
 
-Request:
-
-```json
-{
-  "packageId": "ORDxxxx|P01",
-  "nodeId": "node_1",
-  "nodeName": "Node 1",
-  "event": "pass"
-}
-```
-
-ESP should generate and store NTP/RTC based time, not CC.
+- `POST /api/node/register`
+- `POST /api/node/heartbeat`
+- `POST /api/package/event`

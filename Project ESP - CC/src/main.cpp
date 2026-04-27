@@ -25,6 +25,7 @@ void setup() {
   loadME();
   loadOrders();
   loadPackages();
+  loadNodes();
 
   xTaskCreatePinnedToCore(
     wifiTask,
