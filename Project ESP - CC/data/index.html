@@ -4,6 +4,38 @@
 <meta charset="utf-8">
 <title>AXIS Control</title>
 <link rel="stylesheet" href="/css/demo.css">
+<style>
+.tracking-actions{justify-content:flex-start;}
+.tracking-box{white-space:normal;}
+.track-list{display:flex;flex-direction:column;gap:8px;}
+.track-row{display:flex;justify-content:space-between;gap:14px;padding:7px 0;border-bottom:1px solid var(--border-soft);}
+.track-row span{opacity:.7;}
+.track-row strong{text-align:right;}
+.track-section-title{margin-top:14px;margin-bottom:6px;letter-spacing:.08em;text-transform:uppercase;opacity:.8;}
+.track-items{margin:0;padding-left:20px;}
+.track-items li{margin-bottom:6px;opacity:.92;}
+
+.route-track-wrap{display:flex;flex-direction:column;gap:18px;}
+.route-track-map{position:relative;display:grid;grid-template-columns:repeat(3,1fr);gap:18px;padding:26px 8px 18px 8px;}
+.route-track-map::before{content:"";position:absolute;left:12%;right:12%;top:46px;height:2px;background:rgba(255,255,255,0.14);box-shadow:0 0 10px rgba(46,255,181,0.05);}
+.route-track-progress{position:absolute;left:12%;top:46px;height:2px;width:0;background:var(--accent);box-shadow:0 0 18px rgba(46,255,181,0.55);transition:width .8s ease;}
+.route-track-progress.stage-1{width:0;}
+.route-track-progress.stage-2{width:38%;}
+.route-track-progress.stage-3{width:76%;}
+.route-node{position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center;min-width:0;}
+.route-dot{width:38px;height:38px;border:1px solid var(--border-soft);background:#050505;display:grid;place-items:center;box-shadow:inset 0 0 16px rgba(255,255,255,0.03);transition:var(--transition);}
+.route-dot::after{content:"";width:12px;height:12px;border-radius:50%;background:rgba(255,255,255,0.25);transition:var(--transition);}
+.route-node.done .route-dot,.route-node.active .route-dot{border-color:var(--accent);box-shadow:0 0 22px rgba(46,255,181,0.25), inset 0 0 14px rgba(46,255,181,0.08);}
+.route-node.done .route-dot::after{background:var(--accent);box-shadow:0 0 14px rgba(46,255,181,0.8);}
+.route-node.active .route-dot::after{background:var(--accent);box-shadow:0 0 14px rgba(46,255,181,0.8);animation:routePulse 1.4s infinite ease-in-out;}
+@keyframes routePulse{0%{transform:scale(.75);opacity:.55;}50%{transform:scale(1.35);opacity:1;}100%{transform:scale(.75);opacity:.55;}}
+.route-label{font-weight:700;letter-spacing:.04em;}
+.route-sub{font-size:.82rem;opacity:.68;line-height:1.35;word-break:break-word;}
+.route-package-list{border-top:1px solid var(--border-soft);padding-top:12px;}
+.route-package-item{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.08);}
+.route-package-item span{opacity:.7;}
+@media(max-width:700px){.route-track-map{gap:8px;padding-left:0;padding-right:0;}.route-track-map::before{left:17%;right:17%;}.route-track-progress{left:17%;}.route-label{font-size:.82rem;}.route-sub{font-size:.72rem;}.route-dot{width:32px;height:32px;}}
+</style>
 </head>
 <body>
 
@@ -131,7 +163,7 @@
         <div class="shipping-grid">
           <div>
             <label class="form-label">Destination</label>
-            <input id="shipping-destination" type="text" placeholder="market">
+            <input id="shipping-destination" type="text" placeholder="Destination">
           </div>
 
           <div>
@@ -144,7 +176,7 @@
 
           <div>
             <label class="form-label">Recipient</label>
-            <input id="shipping-recipient" type="text" placeholder="Kuba">
+            <input id="shipping-recipient" type="text" placeholder="Recipient">
           </div>
         </div>
 
@@ -162,8 +194,9 @@
         <p id="tracking-text">Waiting for backend confirmation.</p>
         <div class="tracking-box" id="tracking-box"></div>
 
-        <div class="shipping-actions">
+        <div class="shipping-actions tracking-actions">
           <button class="axis-btn" id="new-order-btn">New Order</button>
+          <button class="axis-btn" id="track-order-btn">Track</button>
         </div>
       </div>
     </div>
@@ -191,6 +224,18 @@ let storage = [];
 let ws = null;
 let cart = [];
 let lastOrderId = null;
+let lastOrderSnapshot = null;
+let lastPackageSnapshot = [];
+let trackingViewMode = "details";
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
 
 // ===== STATUS =====
 async function loadStatus() {
@@ -290,7 +335,6 @@ function updateSummaries() {
       : "Build order from ME storage.";
 }
 
-// ===== ITEM STATUS TEXT =====
 function getItemStatus(item) {
   const count = Number(item.count || 0);
   const hasPattern = !!item.hasPattern;
@@ -325,9 +369,9 @@ function renderStorage(items) {
     div.className = "card";
 
     div.innerHTML = `
-      <h3>${displayName}</h3>
-      <p>Stored: ${item.count}</p>
-      <p>Status: ${statusText}</p>
+      <h3>${escapeHtml(displayName)}</h3>
+      <p>Stored: ${escapeHtml(item.count)}</p>
+      <p>Status: ${escapeHtml(statusText)}</p>
       ${actionHtml}
     `;
 
@@ -335,7 +379,6 @@ function renderStorage(items) {
   });
 }
 
-// ===== STORAGE SEARCH =====
 document.getElementById("search").addEventListener("input", (e) => {
   const q = e.target.value.toLowerCase();
 
@@ -426,13 +469,14 @@ function renderCart() {
     `${cart.length} item types | ${totalUnits} total units`;
 
   cart.forEach(item => {
+    const safeName = item.name.replace(/'/g, "\\'");
     const div = document.createElement("div");
     div.className = "cart-row";
 
     div.innerHTML = `
       <div class="cart-row-main">
-        <div class="cart-row-title">${item.displayName}</div>
-        <div class="muted-text">${item.name}</div>
+        <div class="cart-row-title">${escapeHtml(item.displayName)}</div>
+        <div class="muted-text">${escapeHtml(item.name)}</div>
       </div>
 
       <div class="cart-row-actions">
@@ -442,9 +486,9 @@ function renderCart() {
           min="1"
           max="${item.maxAvailable || 999999}"
           value="${item.count}"
-          onchange="updateCartCount('${item.name.replace(/'/g, "\\'")}', this.value)"
+          onchange="updateCartCount('${safeName}', this.value)"
         >
-        <button class="axis-btn" onclick="removeFromCart('${item.name.replace(/'/g, "\\'")}')">Remove</button>
+        <button class="axis-btn" onclick="removeFromCart('${safeName}')">Remove</button>
       </div>
     `;
 
@@ -464,21 +508,22 @@ function renderBasketCatalog(items) {
     const count = Number(item.count || 0);
     const disabled = count <= 0 ? "disabled" : "";
     const inputId = `b_${safeItemId(item.name)}`;
+    const safeName = item.name.replace(/'/g, "\\'");
 
     const row = document.createElement("div");
     row.className = "basket-item-row";
 
     row.innerHTML = `
       <div class="basket-item-main">
-        <div class="basket-item-title">${displayName}</div>
-        <div class="muted-text">${item.name}</div>
+        <div class="basket-item-title">${escapeHtml(displayName)}</div>
+        <div class="muted-text">${escapeHtml(item.name)}</div>
       </div>
 
-      <div class="basket-item-stock">Stock: ${count}</div>
+      <div class="basket-item-stock">Stock: ${escapeHtml(count)}</div>
 
       <div class="basket-item-actions">
         <input id="${inputId}" class="craft-input" type="number" min="1" max="${count}" value="1" ${disabled}>
-        <button class="axis-btn" ${disabled} onclick="handleAddFromCatalog('${item.name.replace(/'/g, "\\'")}', '${inputId}')">Add</button>
+        <button class="axis-btn" ${disabled} onclick="handleAddFromCatalog('${safeName}', '${inputId}')">Add</button>
       </div>
     `;
 
@@ -510,6 +555,210 @@ function showBasketStep(step) {
   document.getElementById("basket-step-tracking").style.display = step === "tracking" ? "block" : "none";
 }
 
+function getDisplayNameForItem(name) {
+  const entry = storage.find(i => i.name === name) || cart.find(i => i.name === name);
+  return entry?.displayName || name;
+}
+
+function normalizeOrderForTracking(orderLike) {
+  const order = orderLike || {};
+  return {
+    orderId: order.orderId || lastOrderId || "unknown",
+    status: order.status || "unknown",
+    destination: order.destination || "",
+    deliveryMode: order.deliveryMode || "",
+    recipient: order.recipient || "",
+    items: Array.isArray(order.items) ? order.items : [],
+    packages: Array.isArray(order.packages) ? order.packages : []
+  };
+}
+
+function renderTrackingBox(orderLike, packageLike) {
+  const order = normalizeOrderForTracking(orderLike);
+  const packages = Array.isArray(packageLike) ? packageLike : (Array.isArray(order.packages) ? order.packages : []);
+  const box = document.getElementById("tracking-box");
+
+  let html = `
+    <div class="track-list">
+      <div class="track-row"><span>Order</span><strong>${escapeHtml(order.orderId)}</strong></div>
+      <div class="track-row"><span>Status</span><strong>${escapeHtml(order.status)}</strong></div>
+  `;
+
+  if (order.destination) html += `<div class="track-row"><span>Destination</span><strong>${escapeHtml(order.destination)}</strong></div>`;
+  if (order.deliveryMode) html += `<div class="track-row"><span>Delivery</span><strong>${escapeHtml(order.deliveryMode)}</strong></div>`;
+  if (order.recipient) html += `<div class="track-row"><span>Recipient</span><strong>${escapeHtml(order.recipient)}</strong></div>`;
+
+  if (order.items.length > 0) {
+    html += `<div class="track-section-title">Items</div><ul class="track-items">`;
+    order.items.forEach(item => {
+      const name = item.displayName || getDisplayNameForItem(item.name);
+      html += `<li><strong>${escapeHtml(item.count || 0)}x</strong> ${escapeHtml(name)}</li>`;
+    });
+    html += `</ul>`;
+  }
+
+  if (packages.length > 0) {
+    html += `<div class="track-section-title">Packages</div><ul class="track-items">`;
+    packages.forEach(pkg => {
+      if (typeof pkg === "string") {
+        html += `<li>${escapeHtml(pkg)}</li>`;
+        return;
+      }
+
+      const pkgId = pkg.packageId || pkg.address || "unknown package";
+      const pkgStatus = pkg.status ? ` - ${pkg.status}` : "";
+      html += `<li>${escapeHtml(pkgId)}${escapeHtml(pkgStatus)}</li>`;
+    });
+    html += `</ul>`;
+  }
+
+  if (order.items.length === 0 && packages.length === 0) {
+    html += `<div class="muted-text">No item or package details loaded yet.</div>`;
+  }
+
+  html += `</div>`;
+  box.innerHTML = html;
+}
+
+
+function getRouteStage(orderLike, packageLike) {
+  const order = normalizeOrderForTracking(orderLike);
+  const packages = Array.isArray(packageLike) ? packageLike : [];
+  const status = String(order.status || "").toLowerCase();
+
+  if (status === "delivered" || status === "ready_for_pickup" || status === "arrived_at_station") return 3;
+  if (status === "in_transit" || status === "transit" || status === "shipping") return 2;
+  if (packages.some(pkg => String(pkg.status || "").toLowerCase().includes("transit"))) return 2;
+  if (packages.some(pkg => ["delivered", "ready_for_pickup", "arrived_at_station"].includes(String(pkg.status || "").toLowerCase()))) return 3;
+  return 1;
+}
+
+function renderRouteTracking(orderLike, packageLike) {
+  const order = normalizeOrderForTracking(orderLike);
+  const packages = Array.isArray(packageLike) ? packageLike : [];
+  const stage = getRouteStage(order, packages);
+  const box = document.getElementById("tracking-box");
+
+  const destination = order.destination || "Destination";
+  const packageCount = packages.length || order.packages.length || 0;
+  const packageLabel = packageCount === 1 ? "1 package" : `${packageCount} packages`;
+
+  const nodeClass = (nodeStage) => {
+    if (stage > nodeStage) return "done";
+    if (stage === nodeStage) return "active";
+    return "";
+  };
+
+  let html = `
+    <div class="route-track-wrap">
+      <div class="route-track-map">
+        <div class="route-track-progress stage-${stage}"></div>
+
+        <div class="route-node ${nodeClass(1)}">
+          <div class="route-dot"></div>
+          <div class="route-label">Packaged</div>
+          <div class="route-sub">${escapeHtml(packageLabel)} prepared</div>
+        </div>
+
+        <div class="route-node ${nodeClass(2)}">
+          <div class="route-dot"></div>
+          <div class="route-label">Transit</div>
+          <div class="route-sub">Current network movement</div>
+        </div>
+
+        <div class="route-node ${nodeClass(3)}">
+          <div class="route-dot"></div>
+          <div class="route-label">${escapeHtml(destination)}</div>
+          <div class="route-sub">${escapeHtml(order.deliveryMode || "pickup")}${order.recipient ? " · " + escapeHtml(order.recipient) : ""}</div>
+        </div>
+      </div>
+
+      <div class="track-list">
+        <div class="track-row"><span>Order</span><strong>${escapeHtml(order.orderId)}</strong></div>
+        <div class="track-row"><span>Status</span><strong>${escapeHtml(order.status)}</strong></div>
+      </div>
+  `;
+
+  if (packages.length > 0) {
+    html += `<div class="route-package-list">`;
+    packages.forEach(pkg => {
+      const pkgId = typeof pkg === "string" ? pkg : (pkg.packageId || pkg.address || "unknown package");
+      const pkgStatus = typeof pkg === "string" ? "registered" : (pkg.status || "packed");
+      html += `
+        <div class="route-package-item">
+          <strong>${escapeHtml(pkgId)}</strong>
+          <span>${escapeHtml(pkgStatus)}</span>
+        </div>
+      `;
+    });
+    html += `</div>`;
+  }
+
+  html += `</div>`;
+  box.innerHTML = html;
+}
+
+async function trackCurrentOrder() {
+  if (!lastOrderId) {
+    showResultPopup({
+      title: "No Order",
+      text: "No order selected for tracking.",
+      mode: "warn",
+      missing: []
+    });
+    return;
+  }
+
+  try {
+    let order = lastOrderSnapshot || { orderId: lastOrderId, status: "unknown" };
+    let packages = lastPackageSnapshot || [];
+
+    const orderRes = await fetch('/api/orders/get', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ orderId: lastOrderId })
+    });
+
+    const orderData = await orderRes.json();
+    if (orderData.ok && orderData.data?.order) {
+      order = orderData.data.order;
+      lastOrderSnapshot = order;
+    }
+
+    try {
+      const packageRes = await fetch('/api/packages/by-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId: lastOrderId })
+      });
+
+      const packageData = await packageRes.json();
+      if (packageData.ok && Array.isArray(packageData.data?.packages)) {
+        packages = packageData.data.packages;
+        lastPackageSnapshot = packages;
+      }
+    } catch (pkgErr) {
+      console.warn("Package tracking unavailable:", pkgErr);
+    }
+
+    trackingViewMode = "route";
+    document.getElementById("tracking-title").textContent = "Order tracking";
+    document.getElementById("tracking-text").textContent =
+      `Order ${lastOrderId} current status: ${order.status || "unknown"}.`;
+
+    renderRouteTracking(order, packages);
+    showBasketStep("tracking");
+  } catch (e) {
+    console.error("Tracking failed:", e);
+    showResultPopup({
+      title: "Tracking Error",
+      text: "Could not load order tracking.",
+      mode: "error",
+      missing: []
+    });
+  }
+}
+
 document.getElementById("continue-order-btn").addEventListener("click", () => {
   if (cart.length === 0) {
     showResultPopup({
@@ -530,10 +779,16 @@ document.getElementById("back-to-cart-btn").addEventListener("click", () => {
 
 document.getElementById("new-order-btn").addEventListener("click", () => {
   cart = [];
+  lastOrderId = null;
+  lastOrderSnapshot = null;
+  lastPackageSnapshot = [];
+  trackingViewMode = "details";
   renderCart();
   updateSummaries();
   showBasketStep("catalog");
 });
+
+document.getElementById("track-order-btn").addEventListener("click", trackCurrentOrder);
 
 async function submitOrder() {
   if (cart.length === 0) {
@@ -566,6 +821,7 @@ async function submitOrder() {
     recipient,
     items: cart.map(i => ({
       name: i.name,
+      displayName: i.displayName,
       count: Number(i.count || 0)
     }))
   };
@@ -590,21 +846,22 @@ async function submitOrder() {
     }
 
     lastOrderId = data.data.orderId;
+    lastPackageSnapshot = [];
+    lastOrderSnapshot = {
+      orderId: lastOrderId,
+      status: data.data.status || "pending",
+      destination,
+      deliveryMode,
+      recipient,
+      items: payload.items
+    };
 
     document.getElementById("tracking-title").textContent = "Order queued";
     document.getElementById("tracking-text").textContent =
       `Order ${lastOrderId} was created and is waiting for processing.`;
 
-    document.getElementById("tracking-box").textContent =
-      JSON.stringify({
-        orderId: lastOrderId,
-        status: "pending",
-        destination,
-        deliveryMode,
-        recipient,
-        items: payload.items
-      }, null, 2);
-
+    trackingViewMode = "details";
+    renderTrackingBox(lastOrderSnapshot, []);
     showBasketStep("tracking");
     updateSummaries();
 
@@ -800,12 +1057,38 @@ function handleOrderEvent(msg) {
   if (msg.orderId !== lastOrderId) return;
 
   if (msg.event === "order_updated") {
+    lastOrderSnapshot = {
+      ...(lastOrderSnapshot || {}),
+      orderId: msg.orderId,
+      status: msg.status,
+      packages: msg.meta?.packages || lastOrderSnapshot?.packages || []
+    };
+
     document.getElementById("tracking-title").textContent = "Order status updated";
     document.getElementById("tracking-text").textContent =
       `Order ${msg.orderId} is now ${msg.status}.`;
 
-    document.getElementById("tracking-box").textContent =
-      JSON.stringify(msg, null, 2);
+    if (trackingViewMode === "route") {
+      renderRouteTracking(lastOrderSnapshot, lastPackageSnapshot);
+    } else {
+      renderTrackingBox(lastOrderSnapshot, lastPackageSnapshot);
+    }
+  }
+
+  if (msg.event === "package_registered") {
+    const exists = lastPackageSnapshot.some(pkg => pkg.packageId === msg.packageId);
+    if (!exists) {
+      lastPackageSnapshot.push({
+        packageId: msg.packageId,
+        orderId: msg.orderId,
+        status: msg.status || "packed"
+      });
+    }
+    if (trackingViewMode === "route") {
+      renderRouteTracking(lastOrderSnapshot, lastPackageSnapshot);
+    } else {
+      renderTrackingBox(lastOrderSnapshot, lastPackageSnapshot);
+    }
   }
 }
 
