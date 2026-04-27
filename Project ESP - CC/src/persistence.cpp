@@ -2,6 +2,7 @@
 #include "app_state.h"
 #include "utils.h"
 #include "orders.h"
+#include "packages.h"
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 
@@ -11,42 +12,22 @@ void saveConfig() {
   doc["pass"] = staPass;
 
   File f = LittleFS.open("/config.json", "w");
-  if (!f) {
-    addLog("[FS] failed to open /config.json for write");
-    return;
-  }
-
+  if (!f) { addLog("[FS] failed to open /config.json for write"); return; }
   serializeJson(doc, f);
   f.close();
   addLog("[FS] config saved");
 }
 
 void loadConfig() {
-  if (!LittleFS.exists("/config.json")) {
-    addLog("[FS] config.json not found");
-    return;
-  }
-
+  if (!LittleFS.exists("/config.json")) { addLog("[FS] config.json not found"); return; }
   File f = LittleFS.open("/config.json", "r");
-  if (!f) {
-    addLog("[FS] failed to open /config.json for read");
-    return;
-  }
-
-  if (f.size() == 0) {
-    addLog("[FS] config.json empty");
-    f.close();
-    return;
-  }
+  if (!f) { addLog("[FS] failed to open /config.json for read"); return; }
+  if (f.size() == 0) { addLog("[FS] config.json empty"); f.close(); return; }
 
   StaticJsonDocument<256> doc;
   DeserializationError err = deserializeJson(doc, f);
   f.close();
-
-  if (err) {
-    addLog("[FS] config.json parse failed");
-    return;
-  }
+  if (err) { addLog("[FS] config.json parse failed"); return; }
 
   staSsid = doc["ssid"] | "";
   staPass = doc["pass"] | "";
@@ -58,10 +39,7 @@ void saveQueue() {
   JsonArray arr = doc.to<JsonArray>();
 
   for (const auto& cmd : commandQueue) {
-    if (cmd.status == "done" || cmd.status == "failed" || cmd.status == "partial" || cmd.status == "timeout") {
-      continue;
-    }
-
+    if (cmd.status == "done" || cmd.status == "failed" || cmd.status == "partial" || cmd.status == "timeout") continue;
     JsonObject o = arr.createNestedObject();
     o["id"] = cmd.id;
     o["type"] = cmd.type;
@@ -72,11 +50,7 @@ void saveQueue() {
   }
 
   File f = LittleFS.open("/queue.json", "w");
-  if (!f) {
-    addLog("[FS] failed to open /queue.json for write");
-    return;
-  }
-
+  if (!f) { addLog("[FS] failed to open /queue.json for write"); return; }
   serializeJson(doc, f);
   f.close();
   queueDirty = false;
@@ -84,34 +58,17 @@ void saveQueue() {
 }
 
 void loadQueue() {
-  if (!LittleFS.exists("/queue.json")) {
-    addLog("[FS] queue.json not found");
-    return;
-  }
-
+  if (!LittleFS.exists("/queue.json")) { addLog("[FS] queue.json not found"); return; }
   File f = LittleFS.open("/queue.json", "r");
-  if (!f) {
-    addLog("[FS] failed to open /queue.json for read");
-    return;
-  }
-
-  if (f.size() == 0) {
-    addLog("[FS] queue.json empty");
-    f.close();
-    return;
-  }
+  if (!f) { addLog("[FS] failed to open /queue.json for read"); return; }
+  if (f.size() == 0) { addLog("[FS] queue.json empty"); f.close(); return; }
 
   StaticJsonDocument<12288> doc;
   DeserializationError err = deserializeJson(doc, f);
   f.close();
-
-  if (err) {
-    addLog("[FS] queue.json parse failed");
-    return;
-  }
+  if (err) { addLog("[FS] queue.json parse failed"); return; }
 
   commandQueue.clear();
-
   for (JsonObject o : doc.as<JsonArray>()) {
     Command cmd;
     cmd.id = o["id"] | "";
@@ -122,17 +79,12 @@ void loadQueue() {
     cmd.updated = o["updated"] | 0;
     commandQueue.push_back(cmd);
   }
-
   addLog("[FS] queue loaded");
 }
 
 void saveME() {
   File f = LittleFS.open("/me.json", "w");
-  if (!f) {
-    addLog("[FS] failed to open /me.json for write");
-    return;
-  }
-
+  if (!f) { addLog("[FS] failed to open /me.json for write"); return; }
   f.print(meStorage);
   f.close();
   meDirty = false;
@@ -140,30 +92,17 @@ void saveME() {
 }
 
 void loadME() {
-  if (!LittleFS.exists("/me.json")) {
-    addLog("[FS] me.json not found");
-    return;
-  }
-
+  if (!LittleFS.exists("/me.json")) { addLog("[FS] me.json not found"); return; }
   File f = LittleFS.open("/me.json", "r");
-  if (!f) {
-    addLog("[FS] failed to open /me.json for read");
-    return;
-  }
-
-  if (f.size() == 0) {
-    addLog("[FS] me.json empty");
-    f.close();
-    return;
-  }
-
+  if (!f) { addLog("[FS] failed to open /me.json for read"); return; }
+  if (f.size() == 0) { addLog("[FS] me.json empty"); f.close(); return; }
   meStorage = f.readString();
   f.close();
   addLog("[FS] me cache loaded");
 }
 
 void saveOrders() {
-  StaticJsonDocument<24576> doc;
+  DynamicJsonDocument doc(24576);
   JsonArray arr = doc.to<JsonArray>();
 
   for (const auto& order : orders) {
@@ -172,11 +111,7 @@ void saveOrders() {
   }
 
   File f = LittleFS.open("/orders.json", "w");
-  if (!f) {
-    addLog("[FS] failed to open /orders.json for write");
-    return;
-  }
-
+  if (!f) { addLog("[FS] failed to open /orders.json for write"); return; }
   serializeJson(doc, f);
   f.close();
   ordersDirty = false;
@@ -184,34 +119,17 @@ void saveOrders() {
 }
 
 void loadOrders() {
-  if (!LittleFS.exists("/orders.json")) {
-    addLog("[FS] orders.json not found");
-    return;
-  }
-
+  if (!LittleFS.exists("/orders.json")) { addLog("[FS] orders.json not found"); return; }
   File f = LittleFS.open("/orders.json", "r");
-  if (!f) {
-    addLog("[FS] failed to open /orders.json for read");
-    return;
-  }
+  if (!f) { addLog("[FS] failed to open /orders.json for read"); return; }
+  if (f.size() == 0) { addLog("[FS] orders.json empty"); f.close(); return; }
 
-  if (f.size() == 0) {
-    addLog("[FS] orders.json empty");
-    f.close();
-    return;
-  }
-
-  StaticJsonDocument<24576> doc;
+  DynamicJsonDocument doc(24576);
   DeserializationError err = deserializeJson(doc, f);
   f.close();
-
-  if (err) {
-    addLog("[FS] orders.json parse failed");
-    return;
-  }
+  if (err) { addLog("[FS] orders.json parse failed"); return; }
 
   orders.clear();
-
   for (JsonObject o : doc.as<JsonArray>()) {
     OrderRecord order;
     order.orderId = o["orderId"] | "";
@@ -230,17 +148,13 @@ void loadOrders() {
       item.fingerprint = itemObj["fingerprint"] | "";
       order.items.push_back(item);
     }
-
-    if (!order.orderId.isEmpty()) {
-      orders.push_back(order);
-    }
+    orders.push_back(order);
   }
-
   addLog("[FS] orders loaded");
 }
 
 void savePackages() {
-  StaticJsonDocument<24576> doc;
+  DynamicJsonDocument doc(32768);
   JsonArray arr = doc.to<JsonArray>();
 
   for (const auto& pkg : packages) {
@@ -256,14 +170,17 @@ void savePackages() {
     o["updated"] = pkg.updated;
     o["contentsJson"] = pkg.contentsJson;
     o["filterJson"] = pkg.filterJson;
+    o["currentNode"] = pkg.currentNode;
+    o["currentNodeName"] = pkg.currentNodeName;
+    o["lastEvent"] = pkg.lastEvent;
+    o["lastSeenMs"] = pkg.lastSeenMs;
+    o["lastSeenIso"] = pkg.lastSeenIso;
+    o["lastSeenLabel"] = pkg.lastSeenLabel;
+    o["historyJson"] = pkg.historyJson;
   }
 
   File f = LittleFS.open("/packages.json", "w");
-  if (!f) {
-    addLog("[FS] failed to open /packages.json for write");
-    return;
-  }
-
+  if (!f) { addLog("[FS] failed to open /packages.json for write"); return; }
   serializeJson(doc, f);
   f.close();
   packagesDirty = false;
@@ -271,34 +188,17 @@ void savePackages() {
 }
 
 void loadPackages() {
-  if (!LittleFS.exists("/packages.json")) {
-    addLog("[FS] packages.json not found");
-    return;
-  }
-
+  if (!LittleFS.exists("/packages.json")) { addLog("[FS] packages.json not found"); return; }
   File f = LittleFS.open("/packages.json", "r");
-  if (!f) {
-    addLog("[FS] failed to open /packages.json for read");
-    return;
-  }
+  if (!f) { addLog("[FS] failed to open /packages.json for read"); return; }
+  if (f.size() == 0) { addLog("[FS] packages.json empty"); f.close(); return; }
 
-  if (f.size() == 0) {
-    addLog("[FS] packages.json empty");
-    f.close();
-    return;
-  }
-
-  StaticJsonDocument<24576> doc;
+  DynamicJsonDocument doc(32768);
   DeserializationError err = deserializeJson(doc, f);
   f.close();
-
-  if (err) {
-    addLog("[FS] packages.json parse failed");
-    return;
-  }
+  if (err) { addLog("[FS] packages.json parse failed"); return; }
 
   packages.clear();
-
   for (JsonObject o : doc.as<JsonArray>()) {
     PackageRecord pkg;
     pkg.packageId = o["packageId"] | "";
@@ -312,10 +212,14 @@ void loadPackages() {
     pkg.updated = o["updated"] | 0;
     pkg.contentsJson = o["contentsJson"] | "[]";
     pkg.filterJson = o["filterJson"] | "{}";
-    if (!pkg.packageId.isEmpty()) {
-      packages.push_back(pkg);
-    }
+    pkg.currentNode = o["currentNode"] | "";
+    pkg.currentNodeName = o["currentNodeName"] | "";
+    pkg.lastEvent = o["lastEvent"] | "";
+    pkg.lastSeenMs = o["lastSeenMs"] | 0;
+    pkg.lastSeenIso = o["lastSeenIso"] | "";
+    pkg.lastSeenLabel = o["lastSeenLabel"] | "";
+    pkg.historyJson = o["historyJson"] | "[]";
+    packages.push_back(pkg);
   }
-
   addLog("[FS] packages loaded");
 }

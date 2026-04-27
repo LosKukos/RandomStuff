@@ -1,6 +1,7 @@
 #include "wifi_task.h"
 #include "app_state.h"
 #include "utils.h"
+#include "time_service.h"
 #include <WiFi.h>
 
 void wifiTask(void* pvParameters) {
@@ -21,6 +22,7 @@ void wifiTask(void* pvParameters) {
       staConnected = true;
       connectInProgress = false;
       addLog("[WiFi] STA connected: " + WiFi.localIP().toString());
+      syncTimeService();
     } else if (!connectedNow && staConnected) {
       staConnected = false;
       addLog("[WiFi] STA disconnected");

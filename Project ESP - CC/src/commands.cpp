@@ -3,6 +3,13 @@
 #include "utils.h"
 #include <ArduinoJson.h>
 
+Command* findCommandById(const String& id) {
+  for (auto& cmd : commandQueue) {
+    if (cmd.id == id) return &cmd;
+  }
+  return nullptr;
+}
+
 void emitCommandWS(const Command& cmd) {
   StaticJsonDocument<1024> doc;
   doc["event"] = "command";

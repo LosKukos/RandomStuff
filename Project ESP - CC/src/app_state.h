@@ -57,8 +57,17 @@ struct PackageRecord {
   String status;
   uint32_t created = 0;
   uint32_t updated = 0;
+
   String contentsJson;
   String filterJson;
+
+  String currentNode;
+  String currentNodeName;
+  String lastEvent;
+  uint32_t lastSeenMs = 0;
+  String lastSeenIso;
+  String lastSeenLabel;
+  String historyJson;
 };
 
 extern std::vector<Command> commandQueue;

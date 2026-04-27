@@ -6,6 +6,7 @@
 #include "wifi_task.h"
 #include "web.h"
 #include "command_task.h"
+#include "time_service.h"
 
 void setup() {
   Serial.begin(115200);
@@ -16,6 +17,8 @@ void setup() {
   }
 
   addLog("[BOOT] starting");
+
+  initTimeService();
 
   loadConfig();
   loadQueue();

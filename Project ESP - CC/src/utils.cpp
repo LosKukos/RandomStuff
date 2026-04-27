@@ -31,27 +31,6 @@ bool isAP(AsyncWebServerRequest* req) {
   return req->client()->localIP() == WiFi.softAPIP();
 }
 
-Command* findCommandById(const String& id) {
-  for (auto& cmd : commandQueue) {
-    if (cmd.id == id) return &cmd;
-  }
-  return nullptr;
-}
-
-OrderRecord* findOrderById(const String& orderId) {
-  for (auto& order : orders) {
-    if (order.orderId == orderId) return &order;
-  }
-  return nullptr;
-}
-
-PackageRecord* findPackageById(const String& packageId) {
-  for (auto& pkg : packages) {
-    if (pkg.packageId == packageId) return &pkg;
-  }
-  return nullptr;
-}
-
 String makeOkResponse(std::function<void(JsonObject)> fill) {
   StaticJsonDocument<4096> doc;
   doc["ok"] = true;
@@ -71,4 +50,11 @@ String makeErrorResponse(const char* err) {
   String out;
   serializeJson(doc, out);
   return out;
+}
+
+String readBody(uint8_t* data, size_t len) {
+  String body;
+  body.reserve(len);
+  for (size_t i = 0; i < len; i++) body += (char)data[i];
+  return body;
 }
