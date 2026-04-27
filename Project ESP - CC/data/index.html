@@ -53,9 +53,12 @@
         <p id="power-summary">No telemetry available.</p>
       </div>
 
-      <div class="card" id="card-aux">
-        <h3>Open Control</h3>
-        <p id="aux-summary">Temporary free slot ready for next module.</p>
+      <div class="card" id="card-basket">
+        <h3>Basket</h3>
+        <p id="basket-summary">No active order.</p>
+        <div class="status-pill" id="basket-status-pill">Cart empty</div>
+        <br><br>
+        <button class="axis-btn" id="open-basket-btn">Open Basket</button>
       </div>
 
     </div>
@@ -82,6 +85,91 @@
   </div>
 </div>
 
+<!-- BASKET MODAL -->
+<div class="modal-backdrop" id="basket-modal">
+  <div class="modal-panel basket-panel">
+    <div class="modal-header">
+      <div>
+        <h2 style="margin:0;">Order Basket</h2>
+        <div class="muted-text" id="basket-meta">Build order from ME storage.</div>
+      </div>
+      <button class="axis-btn modal-close" id="close-basket-btn">Close</button>
+    </div>
+
+    <!-- STEP 1: catalog + cart -->
+    <div id="basket-step-catalog">
+      <div class="basket-layout">
+        <div class="basket-top">
+          <div class="storage-toolbar">
+            <input id="basket-search" type="search" placeholder="Search item...">
+            <span class="muted-text" id="basket-visible-count">0 visible items</span>
+          </div>
+
+          <div class="basket-item-list" id="basket-items"></div>
+        </div>
+
+        <div class="basket-divider">
+          <span>Current Order</span>
+        </div>
+
+        <div class="basket-bottom">
+          <div id="cart-list" class="cart-list"></div>
+
+          <div class="cart-footer">
+            <div class="cart-summary" id="cart-summary">
+              0 item types selected
+            </div>
+            <button class="axis-btn" id="continue-order-btn">Continue</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- STEP 2: shipping -->
+    <div id="basket-step-shipping" style="display:none;">
+      <div class="shipping-form">
+        <div class="shipping-grid">
+          <div>
+            <label class="form-label">Destination</label>
+            <input id="shipping-destination" type="text" placeholder="market">
+          </div>
+
+          <div>
+            <label class="form-label">Delivery mode</label>
+            <select id="shipping-mode" class="axis-select">
+              <option value="pickup">pickup</option>
+              <option value="personal">personal</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="form-label">Recipient</label>
+            <input id="shipping-recipient" type="text" placeholder="Kuba">
+          </div>
+        </div>
+
+        <div class="shipping-actions">
+          <button class="axis-btn" id="back-to-cart-btn">Back</button>
+          <button class="axis-btn" id="submit-order-btn">Submit Order</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- STEP 3: tracking -->
+    <div id="basket-step-tracking" style="display:none;">
+      <div class="tracking-view">
+        <h3 id="tracking-title">Order queued</h3>
+        <p id="tracking-text">Waiting for backend confirmation.</p>
+        <div class="tracking-box" id="tracking-box"></div>
+
+        <div class="shipping-actions">
+          <button class="axis-btn" id="new-order-btn">New Order</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- RESULT POPUP -->
 <div class="popup-backdrop" id="result-popup">
   <div class="popup-panel" id="result-popup-panel">
@@ -101,6 +189,8 @@
 <script>
 let storage = [];
 let ws = null;
+let cart = [];
+let lastOrderId = null;
 
 // ===== STATUS =====
 async function loadStatus() {
@@ -137,19 +227,22 @@ async function loadME() {
     if (!data.items || !Array.isArray(data.items)) {
       storage = [];
       updateSummaries();
-      render([]);
+      renderStorage([]);
+      renderBasketCatalog([]);
       return false;
     }
 
     storage = data.items;
     updateSummaries();
-    render(storage);
+    renderStorage(storage);
+    renderBasketCatalog(storage);
     return true;
   } catch (e) {
     console.error("ME load failed:", e);
     storage = [];
     updateSummaries();
-    render([]);
+    renderStorage([]);
+    renderBasketCatalog([]);
     return false;
   }
 }
@@ -173,13 +266,28 @@ function updateSummaries() {
   document.getElementById("power-summary").textContent =
     "Grid telemetry pending integration.";
 
-  document.getElementById("aux-summary").textContent =
-    "Temporary free slot ready for next module.";
+  const cartTypes = cart.length;
+  const cartUnits = cart.reduce((sum, item) => sum + (Number(item.count) || 0), 0);
+
+  document.getElementById("basket-summary").textContent =
+    cartTypes > 0
+      ? `${cartTypes} item types | ${cartUnits} total units`
+      : "No active order.";
+
+  document.getElementById("basket-status-pill").textContent =
+    cartTypes > 0
+      ? "Cart ready"
+      : "Cart empty";
 
   document.getElementById("storage-meta").textContent =
     totalTypes > 0
       ? `${totalTypes} item types | Total units: ${totalItems}`
       : "No storage data loaded.";
+
+  document.getElementById("basket-meta").textContent =
+    cartTypes > 0
+      ? `${cartTypes} lines prepared for checkout.`
+      : "Build order from ME storage.";
 }
 
 // ===== ITEM STATUS TEXT =====
@@ -192,8 +300,8 @@ function getItemStatus(item) {
   return "Unavailable";
 }
 
-// ===== RENDER STORAGE =====
-function render(items) {
+// ===== STORAGE RENDER =====
+function renderStorage(items) {
   const container = document.getElementById("items");
   container.innerHTML = "";
 
@@ -227,7 +335,7 @@ function render(items) {
   });
 }
 
-// ===== SEARCH =====
+// ===== STORAGE SEARCH =====
 document.getElementById("search").addEventListener("input", (e) => {
   const q = e.target.value.toLowerCase();
 
@@ -236,8 +344,282 @@ document.getElementById("search").addEventListener("input", (e) => {
     String(i.name || "").toLowerCase().includes(q)
   );
 
-  render(filtered);
+  renderStorage(filtered);
 });
+
+// ===== BASKET HELPERS =====
+function safeItemId(name) {
+  return String(name).replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
+function getCartEntry(name) {
+  return cart.find(i => i.name === name);
+}
+
+function addToCart(name, count) {
+  const qty = Number(count || 0);
+  if (!qty || qty < 1) return;
+
+  const item = storage.find(i => i.name === name);
+  if (!item) return;
+
+  const max = Number(item.count || 0);
+  if (max <= 0) {
+    showResultPopup({
+      title: "Unavailable",
+      text: "This item is not currently in stock.",
+      mode: "error",
+      missing: []
+    });
+    return;
+  }
+
+  const existing = getCartEntry(name);
+  const nextCount = Math.min((existing?.count || 0) + qty, max);
+
+  if (existing) {
+    existing.count = nextCount;
+  } else {
+    cart.push({
+      name: item.name,
+      displayName: item.displayName || item.name,
+      count: Math.min(qty, max),
+      maxAvailable: max
+    });
+  }
+
+  renderCart();
+  updateSummaries();
+}
+
+function removeFromCart(name) {
+  cart = cart.filter(i => i.name !== name);
+  renderCart();
+  updateSummaries();
+}
+
+function updateCartCount(name, count) {
+  const entry = getCartEntry(name);
+  if (!entry) return;
+
+  const item = storage.find(i => i.name === name);
+  const max = Number(item?.count || entry.maxAvailable || 0);
+  const qty = Math.max(1, Math.min(Number(count || 1), max));
+
+  entry.count = qty;
+  renderCart();
+  updateSummaries();
+}
+
+function renderCart() {
+  const container = document.getElementById("cart-list");
+  container.innerHTML = "";
+
+  if (cart.length === 0) {
+    container.innerHTML = `<div class="muted-text">Cart is empty.</div>`;
+    document.getElementById("cart-summary").textContent = "0 item types selected";
+    return;
+  }
+
+  const totalUnits = cart.reduce((sum, item) => sum + Number(item.count || 0), 0);
+  document.getElementById("cart-summary").textContent =
+    `${cart.length} item types | ${totalUnits} total units`;
+
+  cart.forEach(item => {
+    const div = document.createElement("div");
+    div.className = "cart-row";
+
+    div.innerHTML = `
+      <div class="cart-row-main">
+        <div class="cart-row-title">${item.displayName}</div>
+        <div class="muted-text">${item.name}</div>
+      </div>
+
+      <div class="cart-row-actions">
+        <input
+          class="craft-input"
+          type="number"
+          min="1"
+          max="${item.maxAvailable || 999999}"
+          value="${item.count}"
+          onchange="updateCartCount('${item.name.replace(/'/g, "\\'")}', this.value)"
+        >
+        <button class="axis-btn" onclick="removeFromCart('${item.name.replace(/'/g, "\\'")}')">Remove</button>
+      </div>
+    `;
+
+    container.appendChild(div);
+  });
+}
+
+function renderBasketCatalog(items) {
+  const container = document.getElementById("basket-items");
+  container.innerHTML = "";
+
+  const visible = items.slice(0, 150);
+  document.getElementById("basket-visible-count").textContent = `${visible.length} visible items`;
+
+  visible.forEach(item => {
+    const displayName = item.displayName || item.name;
+    const count = Number(item.count || 0);
+    const disabled = count <= 0 ? "disabled" : "";
+    const inputId = `b_${safeItemId(item.name)}`;
+
+    const row = document.createElement("div");
+    row.className = "basket-item-row";
+
+    row.innerHTML = `
+      <div class="basket-item-main">
+        <div class="basket-item-title">${displayName}</div>
+        <div class="muted-text">${item.name}</div>
+      </div>
+
+      <div class="basket-item-stock">Stock: ${count}</div>
+
+      <div class="basket-item-actions">
+        <input id="${inputId}" class="craft-input" type="number" min="1" max="${count}" value="1" ${disabled}>
+        <button class="axis-btn" ${disabled} onclick="handleAddFromCatalog('${item.name.replace(/'/g, "\\'")}', '${inputId}')">Add</button>
+      </div>
+    `;
+
+    container.appendChild(row);
+  });
+}
+
+function handleAddFromCatalog(name, inputId) {
+  const input = document.getElementById(inputId);
+  const count = Number(input?.value || 1);
+  addToCart(name, count);
+}
+
+document.getElementById("basket-search").addEventListener("input", (e) => {
+  const q = e.target.value.toLowerCase();
+
+  const filtered = storage.filter(i =>
+    String(i.displayName || "").toLowerCase().includes(q) ||
+    String(i.name || "").toLowerCase().includes(q)
+  );
+
+  renderBasketCatalog(filtered);
+});
+
+// ===== BASKET FLOW =====
+function showBasketStep(step) {
+  document.getElementById("basket-step-catalog").style.display = step === "catalog" ? "block" : "none";
+  document.getElementById("basket-step-shipping").style.display = step === "shipping" ? "block" : "none";
+  document.getElementById("basket-step-tracking").style.display = step === "tracking" ? "block" : "none";
+}
+
+document.getElementById("continue-order-btn").addEventListener("click", () => {
+  if (cart.length === 0) {
+    showResultPopup({
+      title: "Cart Empty",
+      text: "Add at least one item before continuing.",
+      mode: "warn",
+      missing: []
+    });
+    return;
+  }
+
+  showBasketStep("shipping");
+});
+
+document.getElementById("back-to-cart-btn").addEventListener("click", () => {
+  showBasketStep("catalog");
+});
+
+document.getElementById("new-order-btn").addEventListener("click", () => {
+  cart = [];
+  renderCart();
+  updateSummaries();
+  showBasketStep("catalog");
+});
+
+async function submitOrder() {
+  if (cart.length === 0) {
+    showResultPopup({
+      title: "Cart Empty",
+      text: "There is nothing to submit.",
+      mode: "warn",
+      missing: []
+    });
+    return;
+  }
+
+  const destination = document.getElementById("shipping-destination").value.trim();
+  const deliveryMode = document.getElementById("shipping-mode").value;
+  const recipient = document.getElementById("shipping-recipient").value.trim();
+
+  if (!destination) {
+    showResultPopup({
+      title: "Missing Destination",
+      text: "Destination is required.",
+      mode: "error",
+      missing: []
+    });
+    return;
+  }
+
+  const payload = {
+    destination,
+    deliveryMode,
+    recipient,
+    items: cart.map(i => ({
+      name: i.name,
+      count: Number(i.count || 0)
+    }))
+  };
+
+  try {
+    const res = await fetch('/api/orders/create', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    });
+
+    const data = await res.json();
+
+    if (!data.ok || !data.data?.orderId) {
+      showResultPopup({
+        title: "Order Failed",
+        text: "Backend rejected the order.",
+        mode: "error",
+        missing: []
+      });
+      return;
+    }
+
+    lastOrderId = data.data.orderId;
+
+    document.getElementById("tracking-title").textContent = "Order queued";
+    document.getElementById("tracking-text").textContent =
+      `Order ${lastOrderId} was created and is waiting for processing.`;
+
+    document.getElementById("tracking-box").textContent =
+      JSON.stringify({
+        orderId: lastOrderId,
+        status: "pending",
+        destination,
+        deliveryMode,
+        recipient,
+        items: payload.items
+      }, null, 2);
+
+    showBasketStep("tracking");
+    updateSummaries();
+
+  } catch (e) {
+    console.error("Order submit failed:", e);
+    showResultPopup({
+      title: "Network Error",
+      text: "Could not submit order.",
+      mode: "error",
+      missing: []
+    });
+  }
+}
+
+document.getElementById("submit-order-btn").addEventListener("click", submitOrder);
 
 // ===== SEND CRAFT COMMAND =====
 async function craft(encodedName, safeId) {
@@ -338,9 +720,28 @@ storageModal.addEventListener("click", (e) => {
   }
 });
 
+// ===== BASKET MODAL =====
+const basketModal = document.getElementById("basket-modal");
+
+document.getElementById("open-basket-btn").addEventListener("click", () => {
+  showBasketStep("catalog");
+  basketModal.classList.add("open");
+});
+
+document.getElementById("close-basket-btn").addEventListener("click", () => {
+  basketModal.classList.remove("open");
+});
+
+basketModal.addEventListener("click", (e) => {
+  if (e.target === basketModal) {
+    basketModal.classList.remove("open");
+  }
+});
+
 // ===== HERO BUTTON =====
 document.getElementById("control-btn").addEventListener("click", () => {
-  storageModal.classList.add("open");
+  basketModal.classList.add("open");
+  showBasketStep("catalog");
 });
 
 // ===== HANDLE RESULT EVENT =====
@@ -394,6 +795,20 @@ function handleCommandResult(msg) {
   }
 }
 
+function handleOrderEvent(msg) {
+  if (!lastOrderId) return;
+  if (msg.orderId !== lastOrderId) return;
+
+  if (msg.event === "order_updated") {
+    document.getElementById("tracking-title").textContent = "Order status updated";
+    document.getElementById("tracking-text").textContent =
+      `Order ${msg.orderId} is now ${msg.status}.`;
+
+    document.getElementById("tracking-box").textContent =
+      JSON.stringify(msg, null, 2);
+  }
+}
+
 // ===== WEBSOCKET =====
 function connectWS() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -410,6 +825,10 @@ function connectWS() {
 
       if (msg.event === "command_result") {
         handleCommandResult(msg);
+      }
+
+      if (msg.event === "order_created" || msg.event === "order_updated" || msg.event === "package_registered") {
+        handleOrderEvent(msg);
       }
     } catch (e) {
       console.error("WS parse failed:", e, ev.data);
@@ -464,6 +883,7 @@ async function runLoader() {
 document.addEventListener("DOMContentLoaded", async () => {
   await loadStatus();
   await loadME();
+  renderCart();
   await runLoader();
 
   connectWS();
