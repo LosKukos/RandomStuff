@@ -1,0 +1,479 @@
+-- loader_gate.lua
+-- AXIS Train Loader Gate PoC
+-- Reads order from ESP, loads exact packages, releases train only when complete.
+
+local CFG = {
+  espBase = "http://10.0.1.17",
+
+  -- Package scan holding point
+  scanDepot = "create:depot_0",
+
+  -- Optional Create train station peripheral
+  -- Set to nil if you do not want schedule control yet.
+  trainStation = "create:station_0",
+
+  -- Train schedule
+  homeStation = "Factory",
+
+  -- Redstone outputs
+  acceptSide = "left",       -- sorter/filter path to train loader
+  rejectSide = "right",      -- sorter/filter path back to loop
+  trainReleaseSide = "back", -- releases powered condition at Factory
+
+  -- Timing
+  movePulse = 0.20,
+  trainPulse = 0.50,
+  poll = 0.10,
+  moveTimeout = 5,
+  loadTimeout = 180,
+}
+
+-- =========================
+-- UTILS
+-- =========================
+
+local function dump(v)
+  local function sanitize(value, seen)
+    if type(value) == "table" then
+      if seen[value] then return "<repeated>" end
+      seen[value] = true
+
+      local out = {}
+      for k, item in pairs(value) do
+        out[tostring(k)] = sanitize(item, seen)
+      end
+      return out
+    end
+
+    if type(value) == "function" then return "<function>" end
+    if type(value) == "userdata" or type(value) == "thread" then return tostring(value) end
+    return value
+  end
+
+  local ok, res = pcall(textutils.serialise, v)
+  if ok then print(res) return end
+
+  local ok2, res2 = pcall(textutils.serialise, sanitize(v, {}))
+  if ok2 then print(res2) else print(tostring(v)) end
+end
+
+local function header(title)
+  print("")
+  print(("="):rep(48))
+  print(title)
+  print(("="):rep(48))
+end
+
+local function pulse(side, seconds)
+  redstone.setOutput(side, true)
+  sleep(seconds)
+  redstone.setOutput(side, false)
+end
+
+local function countMap(t)
+  local n = 0
+  for _ in pairs(t) do n = n + 1 end
+  return n
+end
+
+local function postJson(path, payload)
+  local url = CFG.espBase .. path
+  local body = textutils.serialiseJSON(payload)
+
+  local res, err = http.post(url, body, {
+    ["Content-Type"] = "application/json"
+  })
+
+  if not res then
+    return false, {
+      reason = "http_post_failed",
+      error = err,
+      url = url
+    }
+  end
+
+  local raw = res.readAll()
+  res.close()
+
+  local ok, data = pcall(textutils.unserialiseJSON, raw)
+  if not ok or type(data) ~= "table" then
+    return false, {
+      reason = "invalid_json_response",
+      raw = raw,
+      url = url
+    }
+  end
+
+  if data.ok == false then
+    return false, data
+  end
+
+  return true, data
+end
+
+-- =========================
+-- ESP
+-- =========================
+
+local function getOrder(orderId)
+  return postJson("/api/orders/get", {
+    orderId = orderId
+  })
+end
+
+local function getPackagesByOrder(orderId)
+  return postJson("/api/packages/by-order", {
+    orderId = orderId
+  })
+end
+
+local function updateOrder(orderId, status, meta)
+  return postJson("/api/orders/update", {
+    orderId = orderId,
+    status = status,
+    meta = meta or {}
+  })
+end
+
+local function packageEvent(packageId, event)
+  return postJson("/api/package/event", {
+    packageId = packageId,
+    nodeId = "LOADER_GATE",
+    event = event or "loaded"
+  })
+end
+
+-- =========================
+-- PACKAGE SCAN
+-- =========================
+
+local depot = peripheral.wrap(CFG.scanDepot)
+if not depot then
+  error("Scan depot not found: " .. tostring(CFG.scanDepot))
+end
+
+local function readPackageId()
+  local item = depot.getItemDetail(1)
+  if not item or not item.package then
+    return nil
+  end
+
+  local ok, addr = pcall(function()
+    return item.package:getAddress()
+  end)
+
+  if not ok or not addr or addr == "" then
+    return nil
+  end
+
+  return addr
+end
+
+local function waitDepotEmpty(timeout)
+  local deadline = os.clock() + timeout
+
+  while os.clock() < deadline do
+    local item = depot.getItemDetail(1)
+    if not item then return true end
+    sleep(CFG.poll)
+  end
+
+  return false
+end
+
+-- =========================
+-- TRAIN SCHEDULE
+-- =========================
+
+local function poweredCondition()
+  return {
+    {
+      {
+        id = "create:powered",
+        data = {}
+      }
+    }
+  }
+end
+
+local function cargoEmptyCondition()
+  return {
+    {
+      {
+        id = "create:item_threshold",
+        data = {
+          threshold = "0",
+          item = {},
+          measure = 0,
+          operator = 2
+        }
+      }
+    }
+  }
+end
+
+local function destinationEntry(stationName, conditions)
+  return {
+    instruction = {
+      id = "create:destination",
+      data = {
+        text = stationName
+      }
+    },
+    conditions = conditions
+  }
+end
+
+local function makeDeliverySchedule(targetStation, homeStation)
+  return {
+    cyclic = false,
+    entries = {
+      destinationEntry(targetStation, cargoEmptyCondition()),
+      destinationEntry(homeStation, poweredCondition())
+    }
+  }
+end
+
+local function setupTrainSchedule(targetStation)
+  if not CFG.trainStation then
+    print("[TRAIN] schedule disabled")
+    return true
+  end
+
+  local station = peripheral.wrap(CFG.trainStation)
+  if not station then
+    return false, "train_station_not_found"
+  end
+
+  if not station.isTrainPresent() then
+    return false, "no_train_present"
+  end
+
+  local okTarget, reasonTarget = station.canTrainReach(targetStation)
+  if not okTarget then
+    return false, "cannot_reach_target: " .. tostring(reasonTarget)
+  end
+
+  local okHome, reasonHome = station.canTrainReach(CFG.homeStation)
+  if not okHome then
+    return false, "cannot_reach_home: " .. tostring(reasonHome)
+  end
+
+  local schedule = makeDeliverySchedule(targetStation, CFG.homeStation)
+  station.setSchedule(schedule)
+
+  print("[TRAIN] schedule set: " .. tostring(targetStation) .. " -> " .. tostring(CFG.homeStation))
+  return true
+end
+
+-- =========================
+-- LOADER
+-- =========================
+
+local expected = {}
+local loaded = {}
+
+local function allLoaded()
+  for packageId in pairs(expected) do
+    if not loaded[packageId] then
+      return false
+    end
+  end
+  return true
+end
+
+local function printProgress()
+  print("[LOAD] " .. countMap(loaded) .. "/" .. countMap(expected) .. " loaded")
+end
+
+local function printMissing()
+  print("[LOAD] Missing packages:")
+  for packageId in pairs(expected) do
+    if not loaded[packageId] then
+      print(" - " .. packageId)
+    end
+  end
+end
+
+local function acceptPackage(packageId)
+  print("[ACCEPT] " .. packageId)
+
+  pulse(CFG.acceptSide, CFG.movePulse)
+
+  if not waitDepotEmpty(CFG.moveTimeout) then
+    print("[WARN] depot not empty after accept")
+    return false
+  end
+
+  loaded[packageId] = true
+  packageEvent(packageId, "loaded")
+  printProgress()
+
+  return true
+end
+
+local function rejectPackage(packageId)
+  print("[REJECT] " .. tostring(packageId))
+
+  pulse(CFG.rejectSide, CFG.movePulse)
+
+  if not waitDepotEmpty(CFG.moveTimeout) then
+    print("[WARN] depot not empty after reject")
+    return false
+  end
+
+  return true
+end
+
+local function handlePackage(packageId)
+  if expected[packageId] and not loaded[packageId] then
+    return acceptPackage(packageId)
+  end
+
+  return rejectPackage(packageId)
+end
+
+local function runLoadLoop(orderId)
+  local deadline = os.clock() + CFG.loadTimeout
+
+  while os.clock() < deadline do
+    if allLoaded() then
+      print("[LOAD] complete")
+      updateOrder(orderId, "loaded", {
+        loaded = loaded
+      })
+
+      print("[TRAIN] releasing")
+      pulse(CFG.trainReleaseSide, CFG.trainPulse)
+
+      return true
+    end
+
+    local packageId = readPackageId()
+    if packageId then
+      handlePackage(packageId)
+    end
+
+    sleep(CFG.poll)
+  end
+
+  print("[LOAD] timeout")
+  printMissing()
+
+  updateOrder(orderId, "load_timeout", {
+    loaded = loaded
+  })
+
+  return false
+end
+
+-- =========================
+-- MAIN
+-- =========================
+
+local function main()
+  header("AXIS TRAIN LOADER GATE")
+
+  write("Order ID: ")
+  local orderId = read()
+
+  if not orderId or orderId == "" then
+    error("missing order id")
+  end
+
+  print("[ESP] loading order " .. orderId)
+
+  local okOrder, orderRes = getOrder(orderId)
+  if not okOrder then
+    print("[ESP] order load failed")
+    dump(orderRes)
+    return
+  end
+
+  local order = orderRes.data and orderRes.data.order
+  if not order then
+    print("[ESP] missing order in response")
+    dump(orderRes)
+    return
+  end
+
+  local okPackages, pkgRes = getPackagesByOrder(orderId)
+  if not okPackages then
+    print("[ESP] package load failed")
+    dump(pkgRes)
+    return
+  end
+
+  local packages = pkgRes.data and pkgRes.data.packages or {}
+
+  if #packages == 0 then
+    print("[ESP] no packages registered for order")
+    return
+  end
+
+  header("ORDER")
+  print("Order: " .. tostring(order.orderId))
+  print("Status: " .. tostring(order.status))
+  print("Destination: " .. tostring(order.destination))
+  print("Packages: " .. tostring(#packages))
+
+  expected = {}
+  loaded = {}
+
+  for _, pkg in ipairs(packages) do
+    local packageId = pkg.packageId or pkg.address
+    local status = tostring(pkg.status or "")
+
+    if packageId and packageId ~= "" then
+      -- For now load packed/in_transit/unknown packages.
+      -- Later shipment API can decide exact package eligibility.
+      if status ~= "loaded" and status ~= "delivered" then
+        expected[packageId] = true
+      end
+    end
+  end
+
+  if countMap(expected) == 0 then
+    print("[LOAD] nothing to load")
+    return
+  end
+
+  header("EXPECTED PACKAGES")
+  for packageId in pairs(expected) do
+    print(" - " .. packageId)
+  end
+
+  local target = order.destination
+  if not target or target == "" then
+    print("[TRAIN] order has no destination")
+    return
+  end
+
+  local okSchedule, scheduleErr = setupTrainSchedule(target)
+  if not okSchedule then
+    print("[TRAIN] schedule failed: " .. tostring(scheduleErr))
+    return
+  end
+
+  updateOrder(orderId, "loading", {
+    expected = expected
+  })
+
+  header("LOADING")
+  local okLoad = runLoadLoop(orderId)
+
+  if okLoad then
+    header("DONE")
+    print("Order loaded and train released.")
+  else
+    header("FAILED")
+    print("Order loading failed or timed out.")
+  end
+end
+
+local ok, err = pcall(main)
+if not ok then
+  print("")
+  print("[CRASH]")
+  print(err)
+end
