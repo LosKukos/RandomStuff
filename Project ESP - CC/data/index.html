@@ -34,7 +34,44 @@
 .route-package-list{border-top:1px solid var(--border-soft);padding-top:12px;}
 .route-package-item{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.08);}
 .route-package-item span{opacity:.7;}
-@media(max-width:700px){.route-track-map{gap:8px;padding-left:0;padding-right:0;}.route-track-map::before{left:17%;right:17%;}.route-track-progress{left:17%;}.route-label{font-size:.82rem;}.route-sub{font-size:.72rem;}.route-dot{width:32px;height:32px;}}
+
+.route-transit-detail {
+  margin-top: 8px;
+  font-size: 0.78rem;
+  opacity: 0.85;
+  line-height: 1.45;
+}
+
+.route-events {
+  border-top: 1px solid var(--border-soft);
+  padding-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.route-events-title {
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  opacity: .78;
+  font-size: .86rem;
+}
+
+.route-event-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+.route-event-main { min-width: 0; }
+.route-event-node { font-weight: 700; color: var(--accent); margin-bottom: 4px; }
+.route-event-package { opacity: .66; font-size: .82rem; word-break: break-word; }
+.route-event-time { text-align: right; opacity: .85; }
+.route-event-empty { opacity: .65; padding: 8px 0; }
+
+@media(max-width:700px){.route-event-row{grid-template-columns:1fr}.route-event-time{text-align:left}.route-track-map{gap:8px;padding-left:0;padding-right:0;}.route-track-map::before{left:17%;right:17%;}.route-track-progress{left:17%;}.route-label{font-size:.82rem;}.route-sub{font-size:.72rem;}.route-dot{width:32px;height:32px;}}
 </style>
 </head>
 <body>
@@ -621,27 +658,147 @@ function renderTrackingBox(orderLike, packageLike) {
 }
 
 
-function getRouteStage(orderLike, packageLike) {
+function getPackageHistoryEvents(pkg) {
+  if (!pkg || typeof pkg !== "object") return [];
+  if (Array.isArray(pkg.history)) return pkg.history;
+  return [];
+}
+
+function packageHasTransitEvent(pkg) {
+  const history = getPackageHistoryEvents(pkg);
+  return history.some(ev => {
+    const eventName = String(ev.event || "").toLowerCase();
+    return eventName === "pass" || eventName === "scan" || eventName === "transit";
+  });
+}
+
+function deriveTrackingStatus(orderLike, packageLike) {
   const order = normalizeOrderForTracking(orderLike);
   const packages = Array.isArray(packageLike) ? packageLike : [];
-  const status = String(order.status || "").toLowerCase();
+  const orderStatus = String(order.status || "").toLowerCase();
 
-  if (status === "delivered" || status === "ready_for_pickup" || status === "arrived_at_station") return 3;
+  const arrivedStates = ["delivered", "ready_for_pickup", "arrived", "arrived_at_station"];
+  if (arrivedStates.includes(orderStatus)) return orderStatus;
+
+  const anyArrivedPackage = packages.some(pkg =>
+    arrivedStates.includes(String(pkg.status || "").toLowerCase())
+  );
+  if (anyArrivedPackage) return "arrived";
+
+  const anyTransitPackage = packages.some(pkg => {
+    const status = String(pkg.status || "").toLowerCase();
+    return status === "in_transit" || status === "transit" || packageHasTransitEvent(pkg);
+  });
+  if (anyTransitPackage) return "in_transit";
+
+  if (orderStatus === "processing") return "processing";
+  if (orderStatus === "packed") return "packed";
+
+  const anyPackedPackage = packages.some(pkg =>
+    String(pkg.status || "").toLowerCase() === "packed"
+  );
+  if (anyPackedPackage) return "packed";
+
+  return orderStatus || "unknown";
+}
+
+function getRouteStage(orderLike, packageLike) {
+  const status = deriveTrackingStatus(orderLike, packageLike);
+  if (status === "delivered" || status === "ready_for_pickup" || status === "arrived" || status === "arrived_at_station") return 3;
   if (status === "in_transit" || status === "transit" || status === "shipping") return 2;
-  if (packages.some(pkg => String(pkg.status || "").toLowerCase().includes("transit"))) return 2;
-  if (packages.some(pkg => ["delivered", "ready_for_pickup", "arrived_at_station"].includes(String(pkg.status || "").toLowerCase()))) return 3;
   return 1;
+}
+
+function collectTransitEvents(packages) {
+  if (!Array.isArray(packages)) return [];
+  const events = [];
+
+  packages.forEach(pkg => {
+    if (!pkg || typeof pkg !== "object") return;
+    const pkgId = pkg.packageId || pkg.address || "unknown package";
+    const history = getPackageHistoryEvents(pkg);
+
+    history.forEach(ev => {
+      const eventName = String(ev.event || "").toLowerCase();
+      if (eventName !== "pass" && eventName !== "scan" && eventName !== "transit") return;
+      events.push({
+        packageId: pkgId,
+        nodeId: ev.nodeId || pkg.currentNode || "",
+        nodeName: ev.nodeName || pkg.currentNodeName || ev.nodeId || pkg.currentNode || "Unknown node",
+        timeLabel: ev.label || ev.timeLabel || pkg.lastSeenLabel || "time unknown",
+        timeIso: ev.iso || ev.timeIso || pkg.lastSeenIso || "",
+        event: ev.event || "pass"
+      });
+    });
+
+    if (history.length === 0 && (pkg.currentNode || pkg.currentNodeName || pkg.lastSeenLabel)) {
+      events.push({
+        packageId: pkgId,
+        nodeId: pkg.currentNode || "",
+        nodeName: pkg.currentNodeName || pkg.currentNode || "Unknown node",
+        timeLabel: pkg.lastSeenLabel || "time unknown",
+        timeIso: pkg.lastSeenIso || "",
+        event: pkg.lastEvent || "pass"
+      });
+    }
+  });
+
+  return events;
+}
+
+function getLatestTransitEvent(events) {
+  if (!Array.isArray(events) || events.length === 0) return null;
+  return events[events.length - 1];
+}
+
+function renderTransitEvents(events) {
+  if (!events || events.length === 0) {
+    return `
+      <div class="route-events">
+        <div class="route-events-title">Transit checkpoints</div>
+        <div class="route-event-empty">No node checkpoint has detected this package yet.</div>
+      </div>
+    `;
+  }
+
+  let html = `
+    <div class="route-events">
+      <div class="route-events-title">Transit checkpoints</div>
+  `;
+
+  events.forEach(ev => {
+    const timeTitle = ev.timeIso ? ` title="${escapeHtml(ev.timeIso)}"` : "";
+    html += `
+      <div class="route-event-row">
+        <div class="route-event-main">
+          <div class="route-event-node">${escapeHtml(ev.nodeName)}</div>
+          <div class="route-event-package">${escapeHtml(ev.packageId)} · ${escapeHtml(ev.event)}</div>
+        </div>
+        <div class="route-event-time"${timeTitle}>${escapeHtml(ev.timeLabel)}</div>
+      </div>
+    `;
+  });
+
+  html += `</div>`;
+  return html;
 }
 
 function renderRouteTracking(orderLike, packageLike) {
   const order = normalizeOrderForTracking(orderLike);
   const packages = Array.isArray(packageLike) ? packageLike : [];
   const stage = getRouteStage(order, packages);
+  const displayStatus = deriveTrackingStatus(order, packages);
+  const transitEvents = collectTransitEvents(packages);
+  const latestTransit = getLatestTransitEvent(transitEvents);
   const box = document.getElementById("tracking-box");
 
   const destination = order.destination || "Destination";
   const packageCount = packages.length || order.packages.length || 0;
   const packageLabel = packageCount === 1 ? "1 package" : `${packageCount} packages`;
+  const transitSub = latestTransit ? `Last seen at ${latestTransit.nodeName}` : "Waiting for checkpoint detection";
+  const transitDetail = latestTransit
+    ? `<div class="route-transit-detail">${escapeHtml(latestTransit.timeLabel)}</div>`
+    : `<div class="route-transit-detail">No node scan yet</div>`;
 
   const nodeClass = (nodeStage) => {
     if (stage > nodeStage) return "done";
@@ -663,7 +820,10 @@ function renderRouteTracking(orderLike, packageLike) {
         <div class="route-node ${nodeClass(2)}">
           <div class="route-dot"></div>
           <div class="route-label">Transit</div>
-          <div class="route-sub">Current network movement</div>
+          <div class="route-sub">
+            ${escapeHtml(transitSub)}
+            ${transitDetail}
+          </div>
         </div>
 
         <div class="route-node ${nodeClass(3)}">
@@ -675,9 +835,11 @@ function renderRouteTracking(orderLike, packageLike) {
 
       <div class="track-list">
         <div class="track-row"><span>Order</span><strong>${escapeHtml(order.orderId)}</strong></div>
-        <div class="track-row"><span>Status</span><strong>${escapeHtml(order.status)}</strong></div>
+        <div class="track-row"><span>Current status</span><strong>${escapeHtml(displayStatus)}</strong></div>
       </div>
   `;
+
+  html += renderTransitEvents(transitEvents);
 
   if (packages.length > 0) {
     html += `<div class="route-package-list">`;
@@ -742,9 +904,11 @@ async function trackCurrentOrder() {
     }
 
     trackingViewMode = "route";
+    const displayStatus = deriveTrackingStatus(order, packages);
+
     document.getElementById("tracking-title").textContent = "Order tracking";
     document.getElementById("tracking-text").textContent =
-      `Order ${lastOrderId} current status: ${order.status || "unknown"}.`;
+      `Order ${lastOrderId} current status: ${displayStatus}.`;
 
     renderRouteTracking(order, packages);
     showBasketStep("tracking");
@@ -1052,41 +1216,48 @@ function handleCommandResult(msg) {
   }
 }
 
-function handleOrderEvent(msg) {
+async function handleOrderEvent(msg) {
   if (!lastOrderId) return;
-  if (msg.orderId !== lastOrderId) return;
+
+  const msgOrderId = msg.orderId || lastOrderId;
+  if (msgOrderId !== lastOrderId) return;
 
   if (msg.event === "order_updated") {
+    if (!lastOrderSnapshot) lastOrderSnapshot = {};
     lastOrderSnapshot = {
-      ...(lastOrderSnapshot || {}),
+      ...lastOrderSnapshot,
       orderId: msg.orderId,
-      status: msg.status,
-      packages: msg.meta?.packages || lastOrderSnapshot?.packages || []
+      status: msg.status
     };
+
+    if (trackingViewMode === "route") {
+      await trackCurrentOrder();
+      return;
+    }
 
     document.getElementById("tracking-title").textContent = "Order status updated";
     document.getElementById("tracking-text").textContent =
       `Order ${msg.orderId} is now ${msg.status}.`;
 
-    if (trackingViewMode === "route") {
-      renderRouteTracking(lastOrderSnapshot, lastPackageSnapshot);
-    } else {
-      renderTrackingBox(lastOrderSnapshot, lastPackageSnapshot);
-    }
+    renderTrackingBox(lastOrderSnapshot, lastPackageSnapshot);
+    return;
   }
 
-  if (msg.event === "package_registered") {
-    const exists = lastPackageSnapshot.some(pkg => pkg.packageId === msg.packageId);
-    if (!exists) {
-      lastPackageSnapshot.push({
-        packageId: msg.packageId,
-        orderId: msg.orderId,
-        status: msg.status || "packed"
-      });
-    }
+  if (msg.event === "package_registered" || msg.event === "package_event") {
     if (trackingViewMode === "route") {
-      renderRouteTracking(lastOrderSnapshot, lastPackageSnapshot);
-    } else {
+      await trackCurrentOrder();
+      return;
+    }
+
+    if (msg.event === "package_registered") {
+      const exists = lastPackageSnapshot.some(pkg => pkg.packageId === msg.packageId);
+      if (!exists) {
+        lastPackageSnapshot.push({
+          packageId: msg.packageId,
+          orderId: msg.orderId,
+          status: msg.status || "packed"
+        });
+      }
       renderTrackingBox(lastOrderSnapshot, lastPackageSnapshot);
     }
   }
@@ -1110,8 +1281,8 @@ function connectWS() {
         handleCommandResult(msg);
       }
 
-      if (msg.event === "order_created" || msg.event === "order_updated" || msg.event === "package_registered") {
-        handleOrderEvent(msg);
+      if (msg.event === "order_created" || msg.event === "order_updated" || msg.event === "package_registered" || msg.event === "package_event") {
+        await handleOrderEvent(msg);
       }
     } catch (e) {
       console.error("WS parse failed:", e, ev.data);
