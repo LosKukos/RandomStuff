@@ -86,7 +86,15 @@ bool registerPackageFromJson(JsonDocument& doc, PackageRecord& outPkg, bool& exi
   return true;
 }
 
-bool appendPackageEvent(PackageRecord& pkg, const String& nodeId, const String& nodeName, const String& eventName, String& err) {
+static bool appendHistoryEvent(
+  PackageRecord& pkg,
+  const String& actorId,
+  const String& actorName,
+  const String& eventName,
+  const String& newStatus,
+  bool updateCurrentNode,
+  String& err
+) {
   if (pkg.packageId.isEmpty()) {
     err = "invalid_package";
     return false;
@@ -108,8 +116,8 @@ bool appendPackageEvent(PackageRecord& pkg, const String& nodeId, const String& 
   JsonArray arr = histDoc.as<JsonArray>();
   JsonObject e = arr.createNestedObject();
   e["event"] = eventName;
-  e["nodeId"] = nodeId;
-  if (!nodeName.isEmpty()) e["nodeName"] = nodeName;
+  e["nodeId"] = actorId;
+  if (!actorName.isEmpty()) e["nodeName"] = actorName;
   e["uptimeMs"] = t.uptimeMs;
   e["timeSynced"] = t.synced;
   if (t.synced) {
@@ -122,14 +130,25 @@ bool appendPackageEvent(PackageRecord& pkg, const String& nodeId, const String& 
 
   serializeJson(arr, pkg.historyJson);
 
-  pkg.currentNode = nodeId;
-  pkg.currentNodeName = nodeName;
+  if (updateCurrentNode) {
+    pkg.currentNode = actorId;
+    pkg.currentNodeName = actorName;
+  }
+
   pkg.lastEvent = eventName;
   pkg.lastSeenMs = t.uptimeMs;
   pkg.lastSeenIso = t.iso;
   pkg.lastSeenLabel = t.label;
-  pkg.status = "in_transit";
+  if (!newStatus.isEmpty()) pkg.status = newStatus;
   pkg.updated = millis();
 
   return true;
+}
+
+bool appendPackageEvent(PackageRecord& pkg, const String& nodeId, const String& nodeName, const String& eventName, String& err) {
+  return appendHistoryEvent(pkg, nodeId, nodeName, eventName, "in_transit", true, err);
+}
+
+bool appendPackageSystemEvent(PackageRecord& pkg, const String& sourceId, const String& sourceName, const String& eventName, const String& newStatus, String& err) {
+  return appendHistoryEvent(pkg, sourceId, sourceName, eventName, newStatus, false, err);
 }
