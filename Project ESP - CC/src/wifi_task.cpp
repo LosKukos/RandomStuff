@@ -3,6 +3,9 @@
 #include "utils.h"
 #include "time_service.h"
 #include <WiFi.h>
+#include <ESPmDNS.h>
+
+static const char* MDNS_HOSTNAME = "mc";
 
 void wifiTask(void* pvParameters) {
   (void)pvParameters;
@@ -13,6 +16,7 @@ void wifiTask(void* pvParameters) {
   addLog("[WiFi] AP IP: " + WiFi.softAPIP().toString());
 
   bool connectInProgress = false;
+  bool mdnsStarted = false;
 
   for (;;) {
     wl_status_t st = WiFi.status();
@@ -22,10 +26,28 @@ void wifiTask(void* pvParameters) {
       staConnected = true;
       connectInProgress = false;
       addLog("[WiFi] STA connected: " + WiFi.localIP().toString());
+
+      if (!mdnsStarted) {
+        if (MDNS.begin(MDNS_HOSTNAME)) {
+          MDNS.addService("http", "tcp", 80);
+          mdnsStarted = true;
+          addLog(String("[mDNS] started: http://") + MDNS_HOSTNAME + ".local");
+        } else {
+          addLog("[mDNS] start failed");
+        }
+      }
+
       syncTimeService();
+
     } else if (!connectedNow && staConnected) {
       staConnected = false;
       addLog("[WiFi] STA disconnected");
+
+      if (mdnsStarted) {
+        MDNS.end();
+        mdnsStarted = false;
+        addLog("[mDNS] stopped");
+      }
     }
 
     if (!staSsid.isEmpty() && !connectedNow && !connectInProgress) {
