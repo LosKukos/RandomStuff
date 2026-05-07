@@ -97,6 +97,32 @@ void setupWeb() {
 
   server.addHandler(&ws);
 
+  server.on("/api/dash-status", HTTP_GET, [](AsyncWebServerRequest* req) {
+  if (!isSTA(req)) {
+    sendJson(req, 403, makeErrorResponse("sta_only"));
+    return;
+  }
+
+  StaticJsonDocument<512> doc;
+
+  doc["id"] = "mc";
+  doc["name"] = "MC ESP";
+  doc["type"] = "esp";
+  doc["role"] = "custom-controller";
+  doc["fw"] = "0.1.0";
+  doc["status"] = "ok";
+  doc["ip"] = WiFi.localIP().toString();
+  doc["mac"] = WiFi.macAddress();
+  doc["rssi"] = WiFi.RSSI();
+  doc["uptimeMs"] = millis();
+  doc["heap"] = ESP.getFreeHeap();
+  doc["chip"] = "ESP32";
+
+  String out;
+  serializeJson(doc, out);
+  sendJson(req, 200, out);
+  });
+  
   server.on("/", HTTP_GET, [](AsyncWebServerRequest* req) {
     if (isAP(req)) { req->send(LittleFS, "/config.html", "text/html"); return; }
     if (isSTA(req)) { req->send(LittleFS, "/index.html", "text/html"); return; }
