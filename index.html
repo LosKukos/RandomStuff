@@ -855,6 +855,7 @@ function wireMessages() {
 
 // ===== INIT =====
 document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('display-cid').textContent = clientId;
   bindUI();
   bindUIListeners();
 
