@@ -208,9 +208,14 @@ html,body{margin:0;padding:0;min-height:100%;font-family:"DM Mono",monospace;bac
             <div class="form-group">
               <label class="form-label">Minecraft Name</label>
               <select class="form-select" id="reg-mcname">
-                <option value="">— waiting for player list —</option>
+                <option value="">— select your ingame name —</option>
               </select>
-              <div style="font-size:10px;opacity:0.4;margin-top:4px;">Must match your ingame name. Server must be online.</div>
+              <div style="font-size:10px;opacity:0.4;margin-top:4px;">Must match your ingame name. Must be unique.</div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Display Name</label>
+              <input class="form-input" id="reg-displayname" type="text" placeholder="Name shown on orders">
+              <div style="font-size:10px;opacity:0.4;margin-top:4px;">How you appear on orders and packages.</div>
             </div>
             <div class="form-error" id="reg-error"></div>
             <button class="btn" id="register-btn">Create Account</button>
@@ -308,7 +313,8 @@ html,body{margin:0;padding:0;min-height:100%;font-family:"DM Mono",monospace;bac
         </div>
 
       </div>
-<!-- ORDERS TAB -->
+
+      <!-- ORDERS TAB -->
       <div class="tab-pane" id="tab-orders" style="display:none">
         <div class="section-title">My Orders</div>
         <div class="item-list" id="orders-list">
@@ -381,10 +387,6 @@ function showPopup(title, text, mode = 'warn') {
   box.className = 'popup-box ' + mode;
   document.getElementById('popup').classList.add('open');
 }
-
-document.getElementById('popup-close').addEventListener('click', () => {
-  document.getElementById('popup').classList.remove('open');
-});
 
 // ===== SCREENS =====
 function showScreen(id) {
@@ -479,6 +481,12 @@ async function verifyStoredToken() {
 }
 
 function bindUIListeners() {
+  document.getElementById('popup-close').addEventListener('click', () => {
+    document.getElementById('popup').classList.remove('open');
+  });
+
+  document.getElementById('basket-search').addEventListener('input', () => renderCatalog(meStorage));
+
   // Login
   document.getElementById('login-btn').addEventListener('click', async () => {
     const btn = document.getElementById('login-btn');
@@ -504,25 +512,25 @@ function bindUIListeners() {
 
   // Register
   document.getElementById('register-btn').addEventListener('click', async () => {
-    const manual = document.getElementById('reg-mcname-manual');
-    if (manual && manual.value.trim()) document.getElementById('reg-mcname').value = manual.value.trim();
     const btn = document.getElementById('register-btn');
-    const username = document.getElementById('reg-username').value.trim();
-    const password = document.getElementById('reg-password').value;
-    const mcName   = document.getElementById('reg-mcname').value;
-    const errorEl  = document.getElementById('reg-error');
+    const username    = document.getElementById('reg-username').value.trim();
+    const password    = document.getElementById('reg-password').value;
+    const mcNameSel   = document.getElementById('reg-mcname').value.trim();
+    const mcName      = mcNameSel;
+    const displayName = document.getElementById('reg-displayname').value.trim();
+    const errorEl     = document.getElementById('reg-error');
     errorEl.textContent = '';
-    if (!username || !password || !mcName) { errorEl.textContent = 'Fill in all fields.'; return; }
+    if (!username || !password || !mcName || !displayName) { errorEl.textContent = 'Fill in all fields.'; return; }
     if (!client?.connected) { errorEl.textContent = 'Not connected to broker.'; return; }
     btn.disabled = true; btn.textContent = 'Creating account...';
-    const res = await mqttAuth({ action: 'register', username, password, mcName });
+    const res = await mqttAuth({ action: 'register', username, password, mcName, displayName });
     btn.disabled = false; btn.textContent = 'Create Account';
     if (!res.ok) {
       const msgs = { username_taken: 'Username already taken.', mcname_taken: 'MC name already linked to an account.', username_too_short: 'Username too short (min 3).', password_too_short: 'Password too short (min 4).', missing_mcName: 'Select your MC name.', timeout: 'No response from server.' };
       errorEl.textContent = msgs[res.error] || res.error || 'Registration failed.'; return;
     }
     sessionToken = res.sessionToken;
-    currentUser  = { userId: res.userId, username: res.username, mcName: res.mcName };
+    currentUser  = { userId: res.userId, username: res.username, mcName: res.mcName, displayName: res.displayName };
     localStorage.setItem('axis_token', sessionToken);
     localStorage.setItem('axis_user', JSON.stringify(currentUser));
     onLoggedIn(currentUser);
@@ -598,20 +606,10 @@ function onLoggedIn(user) {
 }
 
 // ===== PLAYERS FOR REGISTER =====
-async function loadPlayersForRegister() {
-  const sel = document.getElementById('reg-mcname');
-  mqttCmd('get_players', {});
-  sel.innerHTML = '<option value="">— enter manually below —</option>';
-  const existing = document.getElementById('reg-mcname-manual');
-  if (!existing) {
-    const manual = document.createElement('input');
-    manual.className = 'form-input';
-    manual.id = 'reg-mcname-manual';
-    manual.type = 'text';
-    manual.placeholder = 'Or type your MC name manually';
-    manual.style.marginTop = '8px';
-    sel.parentNode.appendChild(manual);
-  }
+function loadPlayersForRegister() {
+  // Request current player list via MQTT
+  if (client?.connected) mqttCmd('get_players', {});
+  // Dropdown gets populated when players_online event arrives via wireMessages
 }
 
 // ===== DATA LOADING =====
@@ -695,8 +693,6 @@ function renderCatalog(items) {
   }).join('');
 }
 
-document.getElementById('basket-search').addEventListener('input', () => renderCatalog(meStorage));
-
 function addToCart(name, inputId) {
   const qty = Number(document.getElementById(inputId)?.value || 1);
   if (!qty || qty < 1) return;
@@ -743,6 +739,7 @@ function updateCartQty(name, val) {
   entry.count = Math.max(1, Math.min(Number(val||1), entry.max));
   renderCart();
 }
+
 // ===== ORDERS LIST =====
 function renderOrdersList() {
   const list = document.getElementById('orders-list');
