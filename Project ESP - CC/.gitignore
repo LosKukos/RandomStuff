@@ -4,3 +4,9 @@
 .vscode/launch.json
 .vscode/ipch
 node_state.json
+data/config.json
+data/me.json
+data/nodes.json
+data/orders.json
+data/packages.json
+data/queue.json
