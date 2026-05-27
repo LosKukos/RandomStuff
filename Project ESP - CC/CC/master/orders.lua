@@ -1,5 +1,4 @@
 local util = require("util")
-
 local M = {}
 
 function M.splitOrderToPackages(order)
@@ -11,19 +10,9 @@ function M.splitOrderToPackages(order)
 
     while remaining > 0 do
       local chunk = math.min(64, remaining)
-
-      local filter = {
-        name = item.name,
-        count = chunk
-      }
-
-      if item.nbt then
-        filter.nbt = item.nbt
-      end
-
-      if item.fingerprint then
-        filter.fingerprint = item.fingerprint
-      end
+      local filter = { name = item.name, count = chunk }
+      if item.nbt then filter.nbt = item.nbt end
+      if item.fingerprint then filter.fingerprint = item.fingerprint end
 
       table.insert(out, {
         packageId = util.makePackageId(order.orderId, idx),

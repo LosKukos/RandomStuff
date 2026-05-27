@@ -2,16 +2,18 @@
 #include "app_state.h"
 #include "utils.h"
 #include "persistence.h"
+#include "mqtt_bridge.h"
 #include <algorithm>
 
 void commandTask(void* pvParameters) {
   (void)pvParameters;
 
-  uint32_t lastQueueSave = 0;
-  uint32_t lastMeSave = 0;
-  uint32_t lastOrdersSave = 0;
+  uint32_t lastQueueSave    = 0;
+  uint32_t lastMeSave       = 0;
+  uint32_t lastOrdersSave   = 0;
   uint32_t lastPackagesSave = 0;
-  uint32_t lastNodesSave = 0;
+  uint32_t lastNodesSave    = 0;
+  uint32_t lastUsersSave    = 0;
 
   for (;;) {
     uint32_t now = millis();
@@ -69,6 +71,13 @@ void commandTask(void* pvParameters) {
       saveNodes();
       lastNodesSave = now;
     }
+
+    if (usersDirty && (now - lastUsersSave > 2000)) {
+      saveUsers();
+      lastUsersSave = now;
+    }
+
+    mqttLoop();
 
     vTaskDelay(pdMS_TO_TICKS(200));
   }

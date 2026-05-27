@@ -12,3 +12,5 @@ void savePackages();
 void loadPackages();
 void saveNodes();
 void loadNodes();
+void saveUsers();
+void loadUsers();

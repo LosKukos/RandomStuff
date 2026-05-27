@@ -4,17 +4,11 @@
 
 static bool timeConfigured = false;
 
-// Europe/Prague:
-// CET  = UTC+1
-// CEST = UTC+2
-// DST starts: last Sunday in March at 02:00
-// DST ends:   last Sunday in October at 03:00
 static const char* TZ_PRAGUE = "CET-1CEST,M3.5.0/2,M10.5.0/3";
 
 void initTimeService() {
   if (timeConfigured) return;
 
-  // configTzTime sets both NTP servers and timezone/DST rules.
   configTzTime(
     TZ_PRAGUE,
     "pool.ntp.org",
@@ -22,7 +16,6 @@ void initTimeService() {
     "time.google.com"
   );
 
-  // Keep TZ env set explicitly as well, so localtime_r/strftime use Prague rules.
   setenv("TZ", TZ_PRAGUE, 1);
   tzset();
 
@@ -44,8 +37,6 @@ void syncTimeService() {
 bool isTimeSynced() {
   time_t now;
   time(&now);
-
-  // Anything after 2023-01-01 is good enough to say NTP exists.
   return now > 1672531200;
 }
 

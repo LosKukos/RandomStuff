@@ -1,6 +1,7 @@
 #include "commands.h"
 #include "app_state.h"
 #include "utils.h"
+#include "mqtt_bridge.h"
 #include <ArduinoJson.h>
 
 Command* findCommandById(const String& id) {
@@ -26,7 +27,7 @@ void emitCommandWS(const Command& cmd) {
 
   String out;
   serializeJson(doc, out);
-  ws.textAll(out);
+  mqttBroadcast(out);
 }
 
 void pushCommand(const String& type, const String& payloadJson) {

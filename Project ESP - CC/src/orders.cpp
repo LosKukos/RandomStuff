@@ -23,7 +23,6 @@ void serializeOrder(JsonObject o, const OrderRecord& order) {
   o["recipient"] = order.recipient;
   o["created"] = order.created;
   o["updated"] = order.updated;
-
   JsonArray arr = o.createNestedArray("items");
   for (const auto& item : order.items) {
     JsonObject io = arr.createNestedObject();
@@ -35,20 +34,9 @@ bool createOrderFromJson(JsonDocument& doc, OrderRecord& outOrder, String& err) 
   String destination = doc["destination"] | "";
   String deliveryMode = doc["deliveryMode"] | "";
   String recipient = doc["recipient"] | "";
-
-  if (destination.isEmpty()) {
-    err = "missing_destination";
-    return false;
-  }
-  if (deliveryMode.isEmpty()) {
-    err = "missing_deliveryMode";
-    return false;
-  }
-  if (!doc["items"].is<JsonArrayConst>() || doc["items"].as<JsonArrayConst>().size() == 0) {
-    err = "missing_items";
-    return false;
-  }
-
+  if (destination.isEmpty()) { err = "missing_destination"; return false; }
+  if (deliveryMode.isEmpty()) { err = "missing_deliveryMode"; return false; }
+  if (!doc["items"].is<JsonArrayConst>() || doc["items"].as<JsonArrayConst>().size() == 0) { err = "missing_items"; return false; }
   outOrder.orderId = genOrderId();
   outOrder.status = "pending";
   outOrder.destination = destination;
@@ -56,21 +44,14 @@ bool createOrderFromJson(JsonDocument& doc, OrderRecord& outOrder, String& err) 
   outOrder.recipient = recipient;
   outOrder.created = millis();
   outOrder.updated = millis();
-
   for (JsonObjectConst itemObj : doc["items"].as<JsonArrayConst>()) {
     OrderItem item;
     item.name = itemObj["name"] | "";
     item.count = itemObj["count"] | 0;
     item.nbt = itemObj["nbt"] | "";
     item.fingerprint = itemObj["fingerprint"] | "";
-
-    if (item.name.isEmpty() || item.count <= 0) {
-      err = "invalid_item";
-      return false;
-    }
-
+    if (item.name.isEmpty() || item.count <= 0) { err = "invalid_item"; return false; }
     outOrder.items.push_back(item);
   }
-
   return true;
 }

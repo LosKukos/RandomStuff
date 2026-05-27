@@ -1,0 +1,970 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AXIS Remote</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.0.5/mqtt.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;}
+html,body{margin:0;padding:0;min-height:100%;font-family:"DM Mono",monospace;background:#000;color:#fff;}
+
+:root{
+  --accent:#2EFFB5;
+  --accent-soft:rgba(46,255,181,0.12);
+  --border:rgba(255,255,255,0.13);
+  --warn:#FFB800;
+  --error:#FF4646;
+  --transition:0.25s ease;
+}
+
+/* ===== LAYOUT ===== */
+.app{display:flex;flex-direction:column;min-height:100vh;}
+.navbar{border-bottom:1px solid var(--border);padding:16px 24px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;background:#000;z-index:100;}
+.nav-logo{font-size:18px;font-weight:800;letter-spacing:5px;color:var(--accent);}
+.nav-logo span{font-size:9px;display:block;letter-spacing:2px;opacity:0.4;margin-top:2px;}
+.nav-right{display:flex;gap:12px;align-items:center;}
+.conn-dot{width:8px;height:8px;border-radius:50%;background:var(--error);transition:var(--transition);}
+.conn-dot.connected{background:var(--accent);box-shadow:0 0 8px var(--accent);}
+.nav-user{font-size:12px;opacity:0.6;}
+
+.main{flex:1;padding:24px;max-width:1000px;margin:0 auto;width:100%;}
+
+/* ===== SCREENS ===== */
+.screen{display:none;}
+.screen.active{display:block;}
+
+/* ===== LOGIN ===== */
+.login-wrap{min-height:80vh;display:flex;align-items:center;justify-content:center;}
+.login-box{width:min(420px,100%);border:1px solid var(--border);padding:36px;}
+.login-title{font-size:22px;font-weight:800;letter-spacing:4px;color:var(--accent);margin:0 0 6px 0;}
+.login-sub{font-size:11px;opacity:0.4;letter-spacing:1px;margin-bottom:28px;}
+.tab-row{display:flex;gap:0;margin-bottom:24px;border:1px solid var(--border);}
+.tab-btn{flex:1;padding:10px;background:transparent;border:none;color:rgba(255,255,255,0.45);font-family:"DM Mono",monospace;font-size:12px;letter-spacing:1px;cursor:pointer;transition:var(--transition);}
+.tab-btn.active{background:var(--accent-soft);color:var(--accent);}
+
+.form-group{margin-bottom:16px;}
+.form-label{display:block;font-size:11px;letter-spacing:0.08em;opacity:0.55;margin-bottom:6px;text-transform:uppercase;}
+.form-input{width:100%;background:rgba(255,255,255,0.03);color:#fff;border:1px solid var(--border);padding:10px 12px;font-family:"DM Mono",monospace;font-size:13px;transition:var(--transition);outline:none;}
+.form-input:focus{border-color:var(--accent);background:rgba(46,255,181,0.04);}
+.form-error{font-size:11px;color:var(--error);margin-top:6px;min-height:16px;}
+
+/* ===== SELECT ===== */
+.form-select{width:100%;background:rgba(255,255,255,0.03);color:#fff;border:1px solid var(--border);padding:10px 12px;font-family:"DM Mono",monospace;font-size:13px;transition:var(--transition);outline:none;cursor:pointer;}
+.form-select:focus{border-color:var(--accent);}
+.form-select option{background:#111;color:#fff;}
+
+/* ===== BUTTONS ===== */
+.btn{cursor:pointer;appearance:none;border:1px solid var(--border);background:linear-gradient(to right,rgba(255,255,255,0.05),rgba(255,255,255,0.15));color:#fff;padding:11px 24px;font-family:"DM Mono",monospace;font-size:13px;transition:var(--transition);width:100%;margin-top:8px;}
+.btn:hover{border-color:var(--accent);background:linear-gradient(to right,rgba(46,255,181,0.05),rgba(46,255,181,0.18));}
+.btn:disabled{opacity:0.35;cursor:not-allowed;}
+.btn-sm{padding:7px 14px;font-size:12px;width:auto;margin-top:0;}
+.btn-danger{border-color:rgba(255,70,70,0.3);}
+.btn-danger:hover{border-color:var(--error);background:rgba(255,70,70,0.08);}
+
+/* ===== TABS (main) ===== */
+.main-tabs{display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:28px;}
+.main-tab{padding:12px 20px;background:transparent;border:none;border-bottom:2px solid transparent;color:rgba(255,255,255,0.4);font-family:"DM Mono",monospace;font-size:12px;letter-spacing:1px;cursor:pointer;transition:var(--transition);text-transform:uppercase;}
+.main-tab.active{color:var(--accent);border-bottom-color:var(--accent);}
+
+/* ===== STAT TILES ===== */
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:28px;}
+.stat-tile{border:1px solid var(--border);padding:18px;transition:var(--transition);}
+.stat-tile:hover{border-color:var(--accent);background:var(--accent-soft);}
+.stat-label{font-size:10px;letter-spacing:0.1em;text-transform:uppercase;opacity:0.5;margin-bottom:6px;}
+.stat-value{font-size:1.8rem;font-weight:700;color:var(--accent);line-height:1;}
+.stat-sub{font-size:11px;opacity:0.5;margin-top:4px;}
+
+/* ===== SECTION TITLE ===== */
+.section-title{font-size:10px;letter-spacing:0.1em;text-transform:uppercase;opacity:0.5;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--border);}
+
+/* ===== LISTS ===== */
+.item-list{display:flex;flex-direction:column;gap:8px;margin-bottom:28px;}
+.item-row{border:1px solid var(--border);padding:12px 14px;display:grid;gap:12px;align-items:center;transition:var(--transition);font-size:12px;}
+.item-row:hover{border-color:var(--accent);background:var(--accent-soft);}
+.item-row.orders-row{grid-template-columns:minmax(0,1fr) 100px 120px;}
+.item-row.pkg-row{grid-template-columns:minmax(0,1fr) 100px 120px;}
+.item-id{font-weight:700;color:var(--accent);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.item-muted{opacity:0.55;}
+.empty-msg{opacity:0.4;font-size:12px;padding:12px 0;}
+
+/* ===== STATUS BADGE ===== */
+.badge{display:inline-block;padding:2px 7px;border:1px solid currentColor;font-size:10px;letter-spacing:0.05em;text-transform:uppercase;}
+.badge.pending{color:rgba(255,255,255,0.4);}
+.badge.processing,.badge.loading{color:var(--warn);}
+.badge.packed,.badge.loaded,.badge.delivered{color:var(--accent);}
+.badge.in_transit{color:#5BE5FF;}
+.badge.failed{color:var(--error);}
+
+/* ===== BASKET ===== */
+.search-bar{width:100%;margin-bottom:16px;}
+.catalog-list{display:flex;flex-direction:column;gap:8px;max-height:320px;overflow-y:auto;margin-bottom:20px;}
+.catalog-row{border:1px solid var(--border);padding:10px 12px;display:grid;grid-template-columns:minmax(0,1fr) 80px 90px;gap:10px;align-items:center;font-size:12px;}
+.catalog-row:hover{border-color:var(--accent);background:var(--accent-soft);}
+.cart-section{border-top:1px solid var(--border);padding-top:16px;margin-top:4px;}
+.cart-row{border:1px solid var(--border);padding:10px 12px;display:grid;grid-template-columns:minmax(0,1fr) 120px;gap:10px;align-items:center;font-size:12px;margin-bottom:8px;}
+.cart-summary{opacity:0.6;font-size:12px;margin-bottom:12px;}
+.shipping-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px;}
+.num-input{width:70px;background:rgba(255,255,255,0.03);color:#fff;border:1px solid var(--border);padding:6px 8px;font-family:"DM Mono",monospace;font-size:12px;text-align:center;}
+
+/* ===== TRACKING ===== */
+.route-wrap{display:flex;flex-direction:column;gap:16px;}
+.route-map{position:relative;display:grid;grid-template-columns:repeat(3,1fr);gap:12px;padding:24px 8px 16px 8px;}
+.route-map::before{content:"";position:absolute;left:15%;right:15%;top:42px;height:2px;background:rgba(255,255,255,0.1);}
+.route-progress{position:absolute;left:15%;top:42px;height:2px;background:var(--accent);box-shadow:0 0 14px var(--accent);transition:width .8s ease;}
+.route-progress.s1{width:0;}
+.route-progress.s2{width:35%;}
+.route-progress.s3{width:70%;}
+.route-node{display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;position:relative;z-index:2;}
+.route-dot{width:32px;height:32px;border:1px solid var(--border);background:#000;display:grid;place-items:center;}
+.route-dot::after{content:"";width:10px;height:10px;border-radius:50%;background:rgba(255,255,255,0.2);}
+.route-node.done .route-dot,.route-node.active .route-dot{border-color:var(--accent);box-shadow:0 0 16px rgba(46,255,181,0.2);}
+.route-node.done .route-dot::after{background:var(--accent);}
+.route-node.active .route-dot::after{background:var(--accent);animation:pulse 1.4s infinite ease-in-out;}
+@keyframes pulse{0%{transform:scale(.7);opacity:.5;}50%{transform:scale(1.3);opacity:1;}100%{transform:scale(.7);opacity:.5;}}
+.route-label{font-size:11px;font-weight:700;letter-spacing:.04em;}
+.route-sub{font-size:10px;opacity:0.55;}
+.track-rows{display:flex;flex-direction:column;gap:0;}
+.track-row{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);font-size:12px;}
+.track-row span{opacity:.6;}
+
+/* ===== POPUP ===== */
+.popup-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.75);display:none;align-items:center;justify-content:center;z-index:1000;padding:16px;}
+.popup-backdrop.open{display:flex;}
+.popup-box{background:#050505;border:1px solid var(--border);padding:24px;width:min(480px,100%);}
+.popup-box.success{border-color:rgba(46,255,181,0.4);}
+.popup-box.error{border-color:rgba(255,70,70,0.4);}
+.popup-box.warn{border-color:rgba(255,184,0,0.4);}
+.popup-title{margin:0 0 8px 0;font-size:16px;}
+.popup-text{opacity:.75;font-size:13px;margin-bottom:16px;}
+.popup-actions{display:flex;gap:10px;}
+
+/* ===== TOAST ===== */
+#toast{position:fixed;bottom:24px;right:24px;background:#111;border:1px solid var(--accent);color:var(--accent);padding:10px 18px;font-size:12px;letter-spacing:.04em;opacity:0;transition:opacity .3s;pointer-events:none;z-index:9999;}
+#toast.show{opacity:1;}
+
+/* ===== SCROLLBAR ===== */
+::-webkit-scrollbar{width:4px;}
+::-webkit-scrollbar-thumb{background:rgba(46,255,181,0.2);}
+
+@media(max-width:600px){
+  .shipping-grid{grid-template-columns:1fr;}
+  .item-row.orders-row,.item-row.pkg-row{grid-template-columns:1fr;}
+  .catalog-row{grid-template-columns:minmax(0,1fr) 70px 80px;}
+}
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <nav class="navbar">
+    <div class="nav-logo">AXIS<span>Remote Interface</span></div>
+    <div class="nav-right">
+      <div class="conn-dot" id="conn-dot"></div>
+      <span class="nav-user" id="nav-user">Not connected</span>
+      <button class="btn btn-sm btn-danger" id="logout-btn" style="display:none">Logout</button>
+    </div>
+  </nav>
+
+  <main class="main">
+
+    <!-- LOGIN SCREEN -->
+    <div class="screen active" id="screen-login">
+      <div class="login-wrap">
+        <div class="login-box">
+          <div class="login-title">AXIS</div>
+          <div class="login-sub">Remote Access Portal</div>
+
+          <div class="tab-row">
+            <button class="tab-btn active" id="tab-login-btn">Login</button>
+            <button class="tab-btn" id="tab-register-btn">Register</button>
+          </div>
+
+          <!-- LOGIN FORM -->
+          <div id="form-login">
+            <div class="form-group">
+              <label class="form-label">Username</label>
+              <input class="form-input" id="login-username" type="text" placeholder="your username" autocomplete="username">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Password</label>
+              <input class="form-input" id="login-password" type="password" placeholder="••••••••" autocomplete="current-password">
+            </div>
+            <div class="form-error" id="login-error"></div>
+            <button class="btn" id="login-btn">Login</button>
+          </div>
+
+          <!-- REGISTER FORM -->
+          <div id="form-register" style="display:none">
+            <div class="form-group">
+              <label class="form-label">Username</label>
+              <input class="form-input" id="reg-username" type="text" placeholder="choose username">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Password</label>
+              <input class="form-input" id="reg-password" type="password" placeholder="min 4 chars">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Minecraft Name</label>
+              <select class="form-select" id="reg-mcname">
+                <option value="">— waiting for player list —</option>
+              </select>
+              <div style="font-size:10px;opacity:0.4;margin-top:4px;">Must match your ingame name. Server must be online.</div>
+            </div>
+            <div class="form-error" id="reg-error"></div>
+            <button class="btn" id="register-btn">Create Account</button>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- MAIN SCREEN -->
+    <div class="screen" id="screen-main">
+
+      <div class="main-tabs">
+        <button class="main-tab active" data-tab="overview">Overview</button>
+        <button class="main-tab" data-tab="basket">Basket</button>
+        <button class="main-tab" data-tab="orders">My Orders</button>
+      </div>
+
+      <!-- OVERVIEW TAB -->
+      <div class="tab-pane active" id="tab-overview">
+        <div class="stat-grid">
+          <div class="stat-tile">
+            <div class="stat-label">My Orders</div>
+            <div class="stat-value" id="ov-orders">—</div>
+            <div class="stat-sub" id="ov-orders-sub">Loading...</div>
+          </div>
+          <div class="stat-tile">
+            <div class="stat-label">My Packages</div>
+            <div class="stat-value" id="ov-packages">—</div>
+            <div class="stat-sub" id="ov-packages-sub">Loading...</div>
+          </div>
+          <div class="stat-tile">
+            <div class="stat-label">In Transit</div>
+            <div class="stat-value" id="ov-transit">—</div>
+            <div class="stat-sub">packages moving</div>
+          </div>
+        </div>
+
+        <div class="section-title">Recent Orders</div>
+        <div class="item-list" id="ov-order-list">
+          <div class="empty-msg">No orders yet.</div>
+        </div>
+      </div>
+
+      <!-- BASKET TAB -->
+      <div class="tab-pane" id="tab-basket" style="display:none">
+
+        <div id="basket-step-catalog">
+          <div class="section-title">ME Storage</div>
+          <input class="form-input search-bar" id="basket-search" type="search" placeholder="Search items...">
+          <div class="catalog-list" id="catalog-list">
+            <div class="empty-msg">Storage data loading...</div>
+          </div>
+
+          <div class="cart-section">
+            <div class="section-title">Current Order</div>
+            <div id="cart-list"></div>
+            <div class="cart-summary" id="cart-summary">Cart empty</div>
+            <button class="btn" id="basket-continue-btn">Continue to Shipping</button>
+          </div>
+        </div>
+
+        <div id="basket-step-shipping" style="display:none">
+          <div class="section-title">Shipping Details</div>
+          <div class="shipping-grid">
+            <div class="form-group">
+              <label class="form-label">Destination</label>
+              <input class="form-input" id="ship-destination" type="text" placeholder="Station name">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Delivery Mode</label>
+              <select class="form-select" id="ship-mode">
+                <option value="pickup">pickup</option>
+                <option value="personal">personal</option>
+              </select>
+            </div>
+            <div class="form-group" style="grid-column:1/-1">
+              <label class="form-label">Recipient</label>
+              <input class="form-input" id="ship-recipient" type="text" placeholder="Optional">
+            </div>
+          </div>
+          <div style="display:flex;gap:10px;">
+            <button class="btn" id="basket-back-btn" style="width:auto;flex:0 0 auto;padding:11px 20px">Back</button>
+            <button class="btn" id="basket-submit-btn">Submit Order</button>
+          </div>
+        </div>
+
+        <div id="basket-step-confirm" style="display:none">
+          <div class="section-title">Order Submitted</div>
+          <div id="basket-confirm-box" style="border:1px solid var(--border);padding:16px;font-size:12px;margin-bottom:16px;"></div>
+          <div style="display:flex;gap:10px;">
+            <button class="btn" id="basket-new-btn" style="width:auto;flex:0 0 auto;padding:11px 20px">New Order</button>
+            <button class="btn" id="basket-track-btn">Track This Order</button>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ORDERS TAB -->
+      <div class="tab-pane" id="tab-orders" style="display:none">
+        <div class="section-title">My Orders</div>
+        <div class="item-list" id="orders-list">
+          <div class="empty-msg">No orders found.</div>
+        </div>
+
+        <div id="tracking-panel" style="display:none;margin-top:24px;">
+          <div class="section-title">Tracking</div>
+          <div class="route-wrap" id="tracking-wrap"></div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<!-- POPUP -->
+<div class="popup-backdrop" id="popup">
+  <div class="popup-box" id="popup-box">
+    <h3 class="popup-title" id="popup-title">—</h3>
+    <p class="popup-text" id="popup-text"></p>
+    <div class="popup-actions">
+      <button class="btn btn-sm" id="popup-close">Close</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ===== CONFIG =====
+const MQTT_URL  = 'wss://136587ce4f3f4e959935544be4c8ac46.s1.eu.hivemq.cloud:8884/mqtt';
+const MQTT_USER = 'ESP-MC';
+const MQTT_PASS = 'Admin123';
+
+const TOPIC_OUT  = 'axis/broadcast';
+const TOPIC_CMD  = 'axis/cmd';
+const TOPIC_AUTH = 'axis/auth';
+
+// ===== STATE =====
+let client        = null;
+let sessionToken  = localStorage.getItem('axis_token') || null;
+let currentUser   = JSON.parse(localStorage.getItem('axis_user') || 'null');
+let clientId      = localStorage.getItem('axis_cid') || ('web_' + Math.random().toString(36).slice(2, 10));
+let storage       = [];
+let myOrders      = [];
+let myPackages    = [];
+let cart          = [];
+let lastOrderId   = null;
+let pendingAuth   = null;  // resolve fn for auth response
+
+localStorage.setItem('axis_cid', clientId);
+
+// ===== UTILS =====
+function esc(v) {
+  return String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+function showPopup(title, text, mode = 'warn') {
+  document.getElementById('popup-title').textContent = title;
+  document.getElementById('popup-text').textContent = text;
+  const box = document.getElementById('popup-box');
+  box.className = 'popup-box ' + mode;
+  document.getElementById('popup').classList.add('open');
+}
+
+document.getElementById('popup-close').addEventListener('click', () => {
+  document.getElementById('popup').classList.remove('open');
+});
+
+// ===== SCREENS =====
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById('screen-' + id).classList.add('active');
+}
+
+function showTab(name) {
+  document.querySelectorAll('.main-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  document.querySelectorAll('.tab-pane').forEach(p => p.style.display = 'none');
+  document.getElementById('tab-' + name).style.display = 'block';
+}
+
+document.querySelectorAll('.main-tab').forEach(btn => {
+  btn.addEventListener('click', () => showTab(btn.dataset.tab));
+});
+
+// ===== LOGIN TABS =====
+document.getElementById('tab-login-btn').addEventListener('click', () => {
+  document.getElementById('tab-login-btn').classList.add('active');
+  document.getElementById('tab-register-btn').classList.remove('active');
+  document.getElementById('form-login').style.display = 'block';
+  document.getElementById('form-register').style.display = 'none';
+});
+
+document.getElementById('tab-register-btn').addEventListener('click', () => {
+  document.getElementById('tab-register-btn').classList.add('active');
+  document.getElementById('tab-login-btn').classList.remove('active');
+  document.getElementById('form-register').style.display = 'block';
+  document.getElementById('form-login').style.display = 'none';
+  loadPlayersForRegister();
+});
+
+// ===== MQTT =====
+function connectMQTT() {
+  client = mqtt.connect(MQTT_URL, {
+    username: MQTT_USER,
+    password: MQTT_PASS,
+    clientId: clientId,
+    clean: true,
+    reconnectPeriod: 3000,
+  });
+
+  client.on('connect', () => {
+    document.getElementById('conn-dot').classList.add('connected');
+    document.getElementById('nav-user').textContent = currentUser ? currentUser.username : 'Connected';
+
+    client.subscribe(TOPIC_OUT);
+    client.subscribe('axis/auth/res/' + clientId);
+
+    // Auto-login if token stored
+    if (sessionToken && currentUser) {
+      verifyStoredToken();
+    }
+  });
+
+  client.on('disconnect', () => {
+    document.getElementById('conn-dot').classList.remove('connected');
+  });
+
+  client.on('error', (err) => {
+    console.error('MQTT error:', err);
+  });
+
+  client.on('message', (topic, payload) => {
+    const msg = payload.toString();
+    handleMessage(topic, msg);
+  });
+}
+
+function mqttPublish(topic, obj) {
+  if (!client || !client.connected) return;
+  client.publish(topic, JSON.stringify(obj));
+}
+
+// ===== MESSAGE HANDLER =====
+function handleMessage(topic, msg) {
+  let data;
+  try { data = JSON.parse(msg); } catch(e) { return; }
+
+  // Auth response
+  if (topic === 'axis/auth/res/' + clientId) {
+    if (pendingAuth) { pendingAuth(data); pendingAuth = null; }
+    return;
+  }
+
+  // Broadcasts
+  if (topic === TOPIC_OUT) {
+    if (data.event === 'order_created' || data.event === 'order_updated') {
+      refreshMyOrders();
+    }
+    if (data.event === 'package_event' || data.event === 'package_registered') {
+      refreshMyPackages();
+    }
+    if (data.event === 'command_result') {
+      handleCraftResult(data);
+    }
+  }
+}
+
+// ===== AUTH =====
+function mqttAuth(payload) {
+  return new Promise((resolve) => {
+    pendingAuth = resolve;
+    mqttPublish(TOPIC_AUTH, { ...payload, clientId });
+    setTimeout(() => { if (pendingAuth) { pendingAuth({ ok: false, error: 'timeout' }); pendingAuth = null; } }, 8000);
+  });
+}
+
+function mqttCmd(type, payload) {
+  mqttPublish(TOPIC_CMD, { type, payload: payload || {}, token: sessionToken });
+}
+
+async function verifyStoredToken() {
+  // Try to use stored session — just load data, token will be used in commands
+  onLoggedIn(currentUser);
+}
+
+document.getElementById('login-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('login-btn');
+  const username = document.getElementById('login-username').value.trim();
+  const password = document.getElementById('login-password').value;
+  const errorEl = document.getElementById('login-error');
+  errorEl.textContent = '';
+
+  if (!username || !password) { errorEl.textContent = 'Fill in all fields.'; return; }
+  if (!client?.connected) { errorEl.textContent = 'Not connected to broker.'; return; }
+
+  btn.disabled = true;
+  btn.textContent = 'Logging in...';
+
+  const res = await mqttAuth({ action: 'login', username, password });
+
+  btn.disabled = false;
+  btn.textContent = 'Login';
+
+  if (!res.ok) {
+    const msgs = { user_not_found: 'User not found.', wrong_password: 'Wrong password.', timeout: 'No response from server.' };
+    errorEl.textContent = msgs[res.error] || res.error || 'Login failed.';
+    return;
+  }
+
+  sessionToken = res.sessionToken;
+  currentUser  = { userId: res.userId, username: res.username, mcName: res.mcName };
+  localStorage.setItem('axis_token', sessionToken);
+  localStorage.setItem('axis_user', JSON.stringify(currentUser));
+
+  onLoggedIn(currentUser);
+});
+
+document.getElementById('register-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('register-btn');
+  const username = document.getElementById('reg-username').value.trim();
+  const password = document.getElementById('reg-password').value;
+  const mcName   = document.getElementById('reg-mcname').value;
+  const errorEl  = document.getElementById('reg-error');
+  errorEl.textContent = '';
+
+  if (!username || !password || !mcName) { errorEl.textContent = 'Fill in all fields.'; return; }
+  if (!client?.connected) { errorEl.textContent = 'Not connected to broker.'; return; }
+
+  btn.disabled = true;
+  btn.textContent = 'Creating account...';
+
+  const res = await mqttAuth({ action: 'register', username, password, mcName });
+
+  btn.disabled = false;
+  btn.textContent = 'Create Account';
+
+  if (!res.ok) {
+    const msgs = { username_taken: 'Username already taken.', mcname_taken: 'MC name already linked to an account.', username_too_short: 'Username too short (min 3).', password_too_short: 'Password too short (min 4).', missing_mcName: 'Select your MC name.', timeout: 'No response from server.' };
+    errorEl.textContent = msgs[res.error] || res.error || 'Registration failed.';
+    return;
+  }
+
+  sessionToken = res.sessionToken;
+  currentUser  = { userId: res.userId, username: res.username, mcName: res.mcName };
+  localStorage.setItem('axis_token', sessionToken);
+  localStorage.setItem('axis_user', JSON.stringify(currentUser));
+
+  onLoggedIn(currentUser);
+});
+
+function onLoggedIn(user) {
+  document.getElementById('nav-user').textContent = user.username + ' (' + user.mcName + ')';
+  document.getElementById('logout-btn').style.display = 'block';
+  showScreen('main');
+  loadAll();
+}
+
+document.getElementById('logout-btn').addEventListener('click', () => {
+  sessionToken = null;
+  currentUser = null;
+  localStorage.removeItem('axis_token');
+  localStorage.removeItem('axis_user');
+  document.getElementById('nav-user').textContent = 'Not connected';
+  document.getElementById('logout-btn').style.display = 'none';
+  showScreen('login');
+  cart = [];
+  myOrders = [];
+  myPackages = [];
+});
+
+// ===== PLAYERS FOR REGISTER =====
+async function loadPlayersForRegister() {
+  // Fetch player list from broadcast state — we piggyback on MQTT
+  // For now just show a text input fallback if no players available
+  const sel = document.getElementById('reg-mcname');
+
+  mqttCmd('get_players', {});
+
+  // Listen for response on broadcast — simplified approach
+  // The player list is pushed periodically so we just wait for next broadcast
+  // For now populate with a manual entry option
+  sel.innerHTML = '<option value="">— enter manually below —</option>';
+
+  // Also add a text fallback
+  const existing = document.getElementById('reg-mcname-manual');
+  if (!existing) {
+    const manual = document.createElement('input');
+    manual.className = 'form-input';
+    manual.id = 'reg-mcname-manual';
+    manual.type = 'text';
+    manual.placeholder = 'Or type your MC name manually';
+    manual.style.marginTop = '8px';
+    manual.addEventListener('input', () => {
+      if (manual.value.trim()) {
+        sel.value = '';
+      }
+    });
+    sel.parentNode.appendChild(manual);
+  }
+}
+
+// Patch register to use manual input if select is empty
+const origRegister = document.getElementById('register-btn');
+origRegister.addEventListener('click', () => {
+  const manual = document.getElementById('reg-mcname-manual');
+  if (manual && manual.value.trim()) {
+    document.getElementById('reg-mcname').value = manual.value.trim();
+  }
+}, true);
+
+// ===== DATA LOADING =====
+function loadAll() {
+  mqttCmd('get_me', {});
+  refreshMyOrders();
+  refreshMyPackages();
+  updateOverview();
+}
+
+// ME storage comes via broadcast — track it
+let meStorage = [];
+
+function handleMeUpdate(items) {
+  meStorage = items || [];
+  renderCatalog(meStorage);
+}
+
+// Intercept broadcast for me data
+const origHandleMsg = handleMessage;
+
+// Extend message handler for ME and players
+client && client.on('message', (topic, payload) => {
+  if (topic !== TOPIC_OUT) return;
+  let data;
+  try { data = JSON.parse(payload.toString()); } catch(e) { return; }
+  if (data.items && Array.isArray(data.items)) {
+    handleMeUpdate(data.items);
+  }
+  if (data.event === 'players_online' && Array.isArray(data.players)) {
+    const sel = document.getElementById('reg-mcname');
+    if (sel) {
+      sel.innerHTML = '<option value="">— select your name —</option>';
+      data.players.forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p; opt.textContent = p;
+        sel.appendChild(opt);
+      });
+    }
+  }
+});
+
+function refreshMyOrders() {
+  if (!currentUser) return;
+  mqttCmd('get_orders_by_user', { userId: currentUser.userId });
+}
+
+function refreshMyPackages() {
+  if (!currentUser) return;
+  mqttCmd('get_packages_by_user', { userId: currentUser.userId });
+}
+
+// ===== OVERVIEW =====
+function updateOverview() {
+  const total    = myOrders.length;
+  const active   = myOrders.filter(o => !['delivered','failed'].includes(o.status)).length;
+  const pkgTotal = myPackages.length;
+  const transit  = myPackages.filter(p => p.status === 'in_transit').length;
+
+  document.getElementById('ov-orders').textContent     = total;
+  document.getElementById('ov-orders-sub').textContent = active + ' active';
+  document.getElementById('ov-packages').textContent   = pkgTotal;
+  document.getElementById('ov-packages-sub').textContent = pkgTotal + ' total';
+  document.getElementById('ov-transit').textContent    = transit;
+
+  const list = document.getElementById('ov-order-list');
+  if (myOrders.length === 0) {
+    list.innerHTML = '<div class="empty-msg">No orders yet.</div>';
+    return;
+  }
+  const sorted = [...myOrders].sort((a,b) => (b.updated||0)-(a.updated||0)).slice(0,5);
+  list.innerHTML = sorted.map(o => `
+    <div class="item-row orders-row">
+      <div class="item-id">${esc(o.orderId)}</div>
+      <span class="badge ${esc(o.status)}">${esc(o.status)}</span>
+      <span class="item-muted">${esc(o.destination||'—')}</span>
+    </div>`).join('');
+}
+
+// ===== CATALOG =====
+function renderCatalog(items) {
+  const q = document.getElementById('basket-search').value.toLowerCase();
+  const filtered = items.filter(i =>
+    String(i.displayName||'').toLowerCase().includes(q) ||
+    String(i.name||'').toLowerCase().includes(q)
+  );
+  const list = document.getElementById('catalog-list');
+  if (filtered.length === 0) { list.innerHTML = '<div class="empty-msg">No items found.</div>'; return; }
+  list.innerHTML = filtered.slice(0,100).map(item => {
+    const count = Number(item.count||0);
+    const disabled = count <= 0 ? 'disabled' : '';
+    const safeId = 'ci_' + item.name.replace(/[^a-zA-Z0-9]/g,'_');
+    const safeName = item.name.replace(/'/g,"\\'");
+    return `<div class="catalog-row">
+      <div>
+        <div style="font-weight:700;font-size:12px">${esc(item.displayName||item.name)}</div>
+        <div style="font-size:10px;opacity:0.45">${esc(item.name)}</div>
+      </div>
+      <span style="opacity:0.6;font-size:11px">×${esc(count)}</span>
+      <div style="display:flex;gap:6px;align-items:center">
+        <input id="${safeId}" class="num-input" type="number" min="1" max="${count}" value="1" ${disabled}>
+        <button class="btn btn-sm" ${disabled} onclick="addToCart('${safeName}','${safeId}')">Add</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+document.getElementById('basket-search').addEventListener('input', () => renderCatalog(meStorage));
+
+function addToCart(name, inputId) {
+  const qty = Number(document.getElementById(inputId)?.value || 1);
+  if (!qty || qty < 1) return;
+  const item = meStorage.find(i => i.name === name);
+  if (!item) return;
+  const max = Number(item.count||0);
+  if (max <= 0) { showPopup('Unavailable', 'Item not in stock.', 'error'); return; }
+  const existing = cart.find(i => i.name === name);
+  if (existing) { existing.count = Math.min(existing.count + qty, max); }
+  else { cart.push({ name: item.name, displayName: item.displayName||item.name, count: Math.min(qty,max), max }); }
+  renderCart();
+}
+
+function removeFromCart(name) {
+  cart = cart.filter(i => i.name !== name);
+  renderCart();
+}
+
+function renderCart() {
+  const list = document.getElementById('cart-list');
+  const summary = document.getElementById('cart-summary');
+  if (cart.length === 0) { list.innerHTML = ''; summary.textContent = 'Cart empty'; return; }
+  const total = cart.reduce((s,i) => s + i.count, 0);
+  summary.textContent = cart.length + ' item type(s) · ' + total + ' total units';
+  list.innerHTML = cart.map(item => {
+    const safeName = item.name.replace(/'/g,"\\'");
+    return `<div class="cart-row">
+      <div>
+        <div style="font-weight:700">${esc(item.displayName)}</div>
+        <div style="opacity:0.45;font-size:10px">${esc(item.name)}</div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;justify-content:flex-end">
+        <input class="num-input" type="number" min="1" max="${item.max}" value="${item.count}"
+          onchange="updateCartQty('${safeName}',this.value)">
+        <button class="btn btn-sm btn-danger" onclick="removeFromCart('${safeName}')">×</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function updateCartQty(name, val) {
+  const entry = cart.find(i => i.name === name);
+  if (!entry) return;
+  entry.count = Math.max(1, Math.min(Number(val||1), entry.max));
+  renderCart();
+}
+
+document.getElementById('basket-continue-btn').addEventListener('click', () => {
+  if (cart.length === 0) { showPopup('Cart Empty', 'Add at least one item.', 'warn'); return; }
+  document.getElementById('basket-step-catalog').style.display = 'none';
+  document.getElementById('basket-step-shipping').style.display = 'block';
+});
+
+document.getElementById('basket-back-btn').addEventListener('click', () => {
+  document.getElementById('basket-step-shipping').style.display = 'none';
+  document.getElementById('basket-step-catalog').style.display = 'block';
+});
+
+document.getElementById('basket-submit-btn').addEventListener('click', async () => {
+  const destination = document.getElementById('ship-destination').value.trim();
+  const deliveryMode = document.getElementById('ship-mode').value;
+  const recipient = document.getElementById('ship-recipient').value.trim();
+  if (!destination) { showPopup('Missing', 'Destination is required.', 'error'); return; }
+
+  const payload = {
+    destination, deliveryMode, recipient,
+    items: cart.map(i => ({ name: i.name, displayName: i.displayName, count: i.count }))
+  };
+
+  mqttCmd('create_order', payload);
+  toast('Order submitted via MQTT');
+
+  document.getElementById('basket-confirm-box').innerHTML = `
+    <div class="track-row"><span>Destination</span><strong>${esc(destination)}</strong></div>
+    <div class="track-row"><span>Mode</span><strong>${esc(deliveryMode)}</strong></div>
+    <div class="track-row"><span>Items</span><strong>${cart.length} type(s)</strong></div>
+    <div style="margin-top:8px;opacity:0.5;font-size:11px">Waiting for ESP confirmation...</div>
+  `;
+
+  document.getElementById('basket-step-shipping').style.display = 'none';
+  document.getElementById('basket-step-confirm').style.display = 'block';
+  cart = [];
+  renderCart();
+});
+
+document.getElementById('basket-new-btn').addEventListener('click', () => {
+  document.getElementById('basket-step-confirm').style.display = 'none';
+  document.getElementById('basket-step-catalog').style.display = 'block';
+});
+
+document.getElementById('basket-track-btn').addEventListener('click', () => {
+  showTab('orders');
+  document.getElementById('basket-step-confirm').style.display = 'none';
+  document.getElementById('basket-step-catalog').style.display = 'block';
+});
+
+// ===== ORDERS LIST =====
+function renderOrdersList() {
+  const list = document.getElementById('orders-list');
+  if (myOrders.length === 0) { list.innerHTML = '<div class="empty-msg">No orders found.</div>'; return; }
+  const sorted = [...myOrders].sort((a,b) => (b.updated||0)-(a.updated||0));
+  list.innerHTML = sorted.map(o => `
+    <div class="item-row orders-row" style="cursor:pointer" onclick="showTracking('${o.orderId}')">
+      <div>
+        <div class="item-id">${esc(o.orderId)}</div>
+        <div class="item-muted" style="font-size:10px">${esc(o.destination||'—')}</div>
+      </div>
+      <span class="badge ${esc(o.status)}">${esc(o.status)}</span>
+      <span class="item-muted">${esc(o.recipient||'—')}</span>
+    </div>`).join('');
+}
+
+function showTracking(orderId) {
+  const order = myOrders.find(o => o.orderId === orderId);
+  if (!order) return;
+  const pkgs = myPackages.filter(p => p.orderId === orderId);
+  const panel = document.getElementById('tracking-panel');
+  const wrap = document.getElementById('tracking-wrap');
+  panel.style.display = 'block';
+
+  const status = order.status || 'unknown';
+  const arrivedStates = ['delivered','ready_for_pickup','arrived'];
+  const transitStates = ['in_transit','transit','loading','loaded'];
+  let stage = 1;
+  if (arrivedStates.includes(status)) stage = 3;
+  else if (transitStates.includes(status) || pkgs.some(p => p.status === 'in_transit')) stage = 2;
+  else if (status === 'packed' || status === 'processing') stage = 1;
+
+  const nodeClass = n => stage > n ? 'done' : stage === n ? 'active' : '';
+
+  wrap.innerHTML = `
+    <div class="route-map">
+      <div class="route-progress s${stage}"></div>
+      <div class="route-node ${nodeClass(1)}"><div class="route-dot"></div><div class="route-label">Packed</div><div class="route-sub">${pkgs.length} pkg(s)</div></div>
+      <div class="route-node ${nodeClass(2)}"><div class="route-dot"></div><div class="route-label">Transit</div><div class="route-sub">${pkgs.filter(p=>p.currentNodeName).map(p=>p.currentNodeName).join(', ')||'—'}</div></div>
+      <div class="route-node ${nodeClass(3)}"><div class="route-dot"></div><div class="route-label">${esc(order.destination||'Destination')}</div><div class="route-sub">${esc(order.deliveryMode||'pickup')}</div></div>
+    </div>
+    <div class="track-rows">
+      <div class="track-row"><span>Order ID</span><strong>${esc(order.orderId)}</strong></div>
+      <div class="track-row"><span>Status</span><strong>${esc(order.status)}</strong></div>
+      <div class="track-row"><span>Destination</span><strong>${esc(order.destination||'—')}</strong></div>
+      ${order.recipient ? `<div class="track-row"><span>Recipient</span><strong>${esc(order.recipient)}</strong></div>` : ''}
+    </div>
+    ${pkgs.length > 0 ? `
+      <div class="section-title" style="margin-top:16px">Packages</div>
+      ${pkgs.map(p => `
+        <div class="item-row pkg-row">
+          <div class="item-id" style="font-size:11px">${esc(p.packageId)}</div>
+          <span class="badge ${esc(p.status)}">${esc(p.status)}</span>
+          <span class="item-muted">${esc(p.lastSeenLabel||'—')}</span>
+        </div>`).join('')}
+    ` : ''}
+  `;
+
+  wrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ===== CRAFT RESULT =====
+function handleCraftResult(data) {
+  if (data.status === 'done') { toast('Craft queued ✓'); }
+  else if (data.status === 'partial') { showPopup('Partial', 'Materials missing for full craft.', 'warn'); }
+  else if (data.status === 'failed') { showPopup('Craft Failed', data.reason || 'Unknown error.', 'error'); }
+}
+
+// ===== BROADCAST HANDLER FOR DATA =====
+// Re-wire message handler after client is set up
+function wireMessages() {
+  client.on('message', (topic, payload) => {
+    if (topic !== TOPIC_OUT) return;
+    let data;
+    try { data = JSON.parse(payload.toString()); } catch(e) { return; }
+
+    if (data.items && Array.isArray(data.items)) {
+      handleMeUpdate(data.items);
+      return;
+    }
+
+    if (data.event === 'players_online' && Array.isArray(data.players)) {
+      const sel = document.getElementById('reg-mcname');
+      if (sel) {
+        sel.innerHTML = '<option value="">— select your name —</option>';
+        data.players.forEach(p => {
+          const opt = document.createElement('option');
+          opt.value = p; opt.textContent = p; sel.appendChild(opt);
+        });
+      }
+      return;
+    }
+
+    if (data.event === 'orders_list' && Array.isArray(data.orders)) {
+      myOrders = data.orders.filter(o => !currentUser || o.recipient === currentUser.mcName || o.recipient === currentUser.username);
+      renderOrdersList(); updateOverview(); return;
+    }
+
+    if (data.event === 'packages_list' && Array.isArray(data.packages)) {
+      myPackages = data.packages;
+      updateOverview(); return;
+    }
+
+    if (data.event === 'order_created' || data.event === 'order_updated') {
+      refreshMyOrders(); return;
+    }
+
+    if (data.event === 'package_registered' || data.event === 'package_event') {
+      refreshMyPackages(); return;
+    }
+
+    if (data.event === 'command_result') {
+      handleCraftResult(data); return;
+    }
+  });
+}
+
+// ===== INIT =====
+connectMQTT();
+
+document.addEventListener('DOMContentLoaded', () => {
+  if (client) wireMessages();
+
+  // Enter key on login
+  ['login-username','login-password'].forEach(id => {
+    document.getElementById(id).addEventListener('keydown', e => {
+      if (e.key === 'Enter') document.getElementById('login-btn').click();
+    });
+  });
+});
+
+// Wire after connect
+setTimeout(() => { if (client) wireMessages(); }, 100);
+</script>
+</body>
+</html>

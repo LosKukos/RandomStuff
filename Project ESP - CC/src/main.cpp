@@ -7,6 +7,7 @@
 #include "web.h"
 #include "command_task.h"
 #include "time_service.h"
+#include "mqtt_bridge.h"
 
 void setup() {
   Serial.begin(115200);
@@ -26,6 +27,9 @@ void setup() {
   loadOrders();
   loadPackages();
   loadNodes();
+  loadUsers();
+
+  initMqttBridge();
 
   xTaskCreatePinnedToCore(
     wifiTask,

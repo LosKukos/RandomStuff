@@ -80,16 +80,30 @@ struct NodeRecord {
   String lastSeenLabel;
 };
 
+struct UserRecord {
+  String userId;
+  String username;
+  String password;
+  String mcName;
+  String sessionToken;
+  uint32_t created = 0;
+  uint32_t lastSeen = 0;
+};
+
 extern std::vector<Command> commandQueue;
 extern std::vector<OrderRecord> orders;
 extern std::vector<PackageRecord> packages;
 extern std::vector<NodeRecord> nodes;
+extern std::vector<UserRecord> users;
 
 extern String meStorage;
 extern uint32_t meLastUpdate;
+
+extern String playersOnline;   // JSON array of MC player names, pushed by CC master
 
 extern bool queueDirty;
 extern bool meDirty;
 extern bool ordersDirty;
 extern bool packagesDirty;
 extern bool nodesDirty;
+extern bool usersDirty;
