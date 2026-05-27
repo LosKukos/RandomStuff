@@ -855,7 +855,7 @@ function wireMessages() {
 
 // ===== INIT =====
 document.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('display-cid').textContent = clientId;
+  document.getElementById('display-cid').textContent = localStorage.getItem('axis_cid') || 'not set';
   bindUI();
   bindUIListeners();
 
