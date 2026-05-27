@@ -308,8 +308,7 @@ html,body{margin:0;padding:0;min-height:100%;font-family:"DM Mono",monospace;bac
         </div>
 
       </div>
-
-      <!-- ORDERS TAB -->
+<!-- ORDERS TAB -->
       <div class="tab-pane" id="tab-orders" style="display:none">
         <div class="section-title">My Orders</div>
         <div class="item-list" id="orders-list">
@@ -399,18 +398,481 @@ function showTab(name) {
   document.getElementById('tab-' + name).style.display = 'block';
 }
 
-document.querySelectorAll('.main-tab').forEach(btn => {
-  btn.addEventListener('click', () => showTab(btn.dataset.tab));
-});
+// ===== BIND UI EVENTS — called from DOMContentLoaded =====
+function bindUI() {
+  // Main tabs
+  document.querySelectorAll('.main-tab').forEach(btn => {
+    btn.addEventListener('click', () => showTab(btn.dataset.tab));
+  });
 
-// ===== LOGIN TABS =====
-document.getElementById('tab-login-btn').addEventListener('click', () => {
-  document.getElementById('tab-login-btn').classList.add('active');
-  document.getElementById('tab-register-btn').classList.remove('active');
-  document.getElementById('form-login').style.display = 'block';
-  document.getElementById('form-register').style.display = 'none';
-});
+  // Login tabs
+  document.getElementById('tab-login-btn').addEventListener('click', () => {
+    document.getElementById('tab-login-btn').classList.add('active');
+    document.getElementById('tab-register-btn').classList.remove('active');
+    document.getElementById('form-login').style.display = 'block';
+    document.getElementById('form-register').style.display = 'none';
+  });
 
-document.getElementById('tab-register-btn').addEventListener('click', () => {
-  document.getElementById('tab-register-btn').classList.add('active');
-  document.getElementById('tab-login-btn').classList.remove
+  document.getElementById('tab-register-btn').addEventListener('click', () => {
+    document.getElementById('tab-register-btn').classList.add('active');
+    document.getElementById('tab-login-btn').classList.remove('active');
+    document.getElementById('form-register').style.display = 'block';
+    document.getElementById('form-login').style.display = 'none';
+    loadPlayersForRegister();
+  });
+
+} // end bindUI — tab listeners only; rest of listeners below are wired directly in DOMContentLoaded
+
+// ===== MQTT =====
+function connectMQTT() {
+  client = mqtt.connect(MQTT_URL, {
+    username: MQTT_USER,
+    password: MQTT_PASS,
+    clientId: clientId,
+    clean: true,
+    reconnectPeriod: 3000,
+  });
+
+  client.on('connect', () => {
+    document.getElementById('conn-dot').classList.add('connected');
+    document.getElementById('nav-user').textContent = currentUser ? currentUser.username : 'Connected';
+
+    client.subscribe(TOPIC_OUT);
+    client.subscribe('axis/auth/res/' + clientId);
+
+    // Auto-login if token stored
+    if (sessionToken && currentUser) {
+      verifyStoredToken();
+    }
+  });
+
+  client.on('disconnect', () => {
+    document.getElementById('conn-dot').classList.remove('connected');
+  });
+
+  client.on('error', (err) => {
+    console.error('MQTT error:', err);
+  });
+}
+
+function mqttPublish(topic, obj) {
+  if (!client || !client.connected) return;
+  client.publish(topic, JSON.stringify(obj));
+}
+
+// ===== AUTH =====
+function mqttAuth(payload) {
+  return new Promise((resolve) => {
+    pendingAuth = resolve;
+    mqttPublish(TOPIC_AUTH, { ...payload, clientId });
+    setTimeout(() => { if (pendingAuth) { pendingAuth({ ok: false, error: 'timeout' }); pendingAuth = null; } }, 8000);
+  });
+}
+
+function mqttCmd(type, payload) {
+  mqttPublish(TOPIC_CMD, { type, payload: payload || {}, token: sessionToken });
+}
+
+async function verifyStoredToken() {
+  // Try to use stored session — just load data, token will be used in commands
+  onLoggedIn(currentUser);
+}
+
+function bindUIListeners() {
+  // Login
+  document.getElementById('login-btn').addEventListener('click', async () => {
+    const btn = document.getElementById('login-btn');
+    const username = document.getElementById('login-username').value.trim();
+    const password = document.getElementById('login-password').value;
+    const errorEl = document.getElementById('login-error');
+    errorEl.textContent = '';
+    if (!username || !password) { errorEl.textContent = 'Fill in all fields.'; return; }
+    if (!client?.connected) { errorEl.textContent = 'Not connected to broker.'; return; }
+    btn.disabled = true; btn.textContent = 'Logging in...';
+    const res = await mqttAuth({ action: 'login', username, password });
+    btn.disabled = false; btn.textContent = 'Login';
+    if (!res.ok) {
+      const msgs = { user_not_found: 'User not found.', wrong_password: 'Wrong password.', timeout: 'No response from server.' };
+      errorEl.textContent = msgs[res.error] || res.error || 'Login failed.'; return;
+    }
+    sessionToken = res.sessionToken;
+    currentUser  = { userId: res.userId, username: res.username, mcName: res.mcName };
+    localStorage.setItem('axis_token', sessionToken);
+    localStorage.setItem('axis_user', JSON.stringify(currentUser));
+    onLoggedIn(currentUser);
+  });
+
+  // Register
+  document.getElementById('register-btn').addEventListener('click', async () => {
+    const manual = document.getElementById('reg-mcname-manual');
+    if (manual && manual.value.trim()) document.getElementById('reg-mcname').value = manual.value.trim();
+    const btn = document.getElementById('register-btn');
+    const username = document.getElementById('reg-username').value.trim();
+    const password = document.getElementById('reg-password').value;
+    const mcName   = document.getElementById('reg-mcname').value;
+    const errorEl  = document.getElementById('reg-error');
+    errorEl.textContent = '';
+    if (!username || !password || !mcName) { errorEl.textContent = 'Fill in all fields.'; return; }
+    if (!client?.connected) { errorEl.textContent = 'Not connected to broker.'; return; }
+    btn.disabled = true; btn.textContent = 'Creating account...';
+    const res = await mqttAuth({ action: 'register', username, password, mcName });
+    btn.disabled = false; btn.textContent = 'Create Account';
+    if (!res.ok) {
+      const msgs = { username_taken: 'Username already taken.', mcname_taken: 'MC name already linked to an account.', username_too_short: 'Username too short (min 3).', password_too_short: 'Password too short (min 4).', missing_mcName: 'Select your MC name.', timeout: 'No response from server.' };
+      errorEl.textContent = msgs[res.error] || res.error || 'Registration failed.'; return;
+    }
+    sessionToken = res.sessionToken;
+    currentUser  = { userId: res.userId, username: res.username, mcName: res.mcName };
+    localStorage.setItem('axis_token', sessionToken);
+    localStorage.setItem('axis_user', JSON.stringify(currentUser));
+    onLoggedIn(currentUser);
+  });
+
+  // Logout
+  document.getElementById('logout-btn').addEventListener('click', () => {
+    sessionToken = null; currentUser = null;
+    localStorage.removeItem('axis_token'); localStorage.removeItem('axis_user');
+    document.getElementById('nav-user').textContent = 'Not connected';
+    document.getElementById('logout-btn').style.display = 'none';
+    showScreen('login'); cart = []; myOrders = []; myPackages = [];
+  });
+
+  // Popup close
+  document.getElementById('popup-close').addEventListener('click', () => {
+    document.getElementById('popup').classList.remove('open');
+  });
+
+  // Basket search
+  document.getElementById('basket-search').addEventListener('input', () => renderCatalog(meStorage));
+
+  // Basket flow
+  document.getElementById('basket-continue-btn').addEventListener('click', () => {
+    if (cart.length === 0) { showPopup('Cart Empty', 'Add at least one item.', 'warn'); return; }
+    document.getElementById('basket-step-catalog').style.display = 'none';
+    document.getElementById('basket-step-shipping').style.display = 'block';
+  });
+  document.getElementById('basket-back-btn').addEventListener('click', () => {
+    document.getElementById('basket-step-shipping').style.display = 'none';
+    document.getElementById('basket-step-catalog').style.display = 'block';
+  });
+  document.getElementById('basket-submit-btn').addEventListener('click', async () => {
+    const destination = document.getElementById('ship-destination').value.trim();
+    const deliveryMode = document.getElementById('ship-mode').value;
+    const recipient = document.getElementById('ship-recipient').value.trim();
+    if (!destination) { showPopup('Missing', 'Destination is required.', 'error'); return; }
+    const payload = { destination, deliveryMode, recipient, items: cart.map(i => ({ name: i.name, displayName: i.displayName, count: i.count })) };
+    mqttCmd('create_order', payload);
+    toast('Order submitted via MQTT');
+    document.getElementById('basket-confirm-box').innerHTML = `
+      <div class="track-row"><span>Destination</span><strong>${esc(destination)}</strong></div>
+      <div class="track-row"><span>Mode</span><strong>${esc(deliveryMode)}</strong></div>
+      <div class="track-row"><span>Items</span><strong>${cart.length} type(s)</strong></div>
+      <div style="margin-top:8px;opacity:0.5;font-size:11px">Waiting for ESP confirmation...</div>`;
+    document.getElementById('basket-step-shipping').style.display = 'none';
+    document.getElementById('basket-step-confirm').style.display = 'block';
+    cart = []; renderCart();
+  });
+  document.getElementById('basket-new-btn').addEventListener('click', () => {
+    document.getElementById('basket-step-confirm').style.display = 'none';
+    document.getElementById('basket-step-catalog').style.display = 'block';
+  });
+  document.getElementById('basket-track-btn').addEventListener('click', () => {
+    showTab('orders');
+    document.getElementById('basket-step-confirm').style.display = 'none';
+    document.getElementById('basket-step-catalog').style.display = 'block';
+  });
+
+  // Enter key on login fields
+  ['login-username','login-password'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('login-btn').click(); });
+  });
+
+} // end bindUIListeners
+
+function onLoggedIn(user) {
+  document.getElementById('nav-user').textContent = user.username + ' (' + user.mcName + ')';
+  document.getElementById('logout-btn').style.display = 'block';
+  showScreen('main');
+  loadAll();
+}
+
+// ===== PLAYERS FOR REGISTER =====
+async function loadPlayersForRegister() {
+  const sel = document.getElementById('reg-mcname');
+  mqttCmd('get_players', {});
+  sel.innerHTML = '<option value="">— enter manually below —</option>';
+  const existing = document.getElementById('reg-mcname-manual');
+  if (!existing) {
+    const manual = document.createElement('input');
+    manual.className = 'form-input';
+    manual.id = 'reg-mcname-manual';
+    manual.type = 'text';
+    manual.placeholder = 'Or type your MC name manually';
+    manual.style.marginTop = '8px';
+    sel.parentNode.appendChild(manual);
+  }
+}
+
+// ===== DATA LOADING =====
+function loadAll() {
+  mqttCmd('get_me', {});
+  refreshMyOrders();
+  refreshMyPackages();
+  updateOverview();
+}
+
+// ME storage comes via broadcast — track it
+let meStorage = [];
+
+function handleMeUpdate(items) {
+  meStorage = items || [];
+  renderCatalog(meStorage);
+}
+
+function refreshMyOrders() {
+  if (!currentUser) return;
+  mqttCmd('get_orders_by_user', { userId: currentUser.userId });
+}
+
+function refreshMyPackages() {
+  if (!currentUser) return;
+  mqttCmd('get_packages_by_user', { userId: currentUser.userId });
+}
+
+// ===== OVERVIEW =====
+function updateOverview() {
+  const total    = myOrders.length;
+  const active   = myOrders.filter(o => !['delivered','failed'].includes(o.status)).length;
+  const pkgTotal = myPackages.length;
+  const transit  = myPackages.filter(p => p.status === 'in_transit').length;
+
+  document.getElementById('ov-orders').textContent     = total;
+  document.getElementById('ov-orders-sub').textContent = active + ' active';
+  document.getElementById('ov-packages').textContent   = pkgTotal;
+  document.getElementById('ov-packages-sub').textContent = pkgTotal + ' total';
+  document.getElementById('ov-transit').textContent    = transit;
+
+  const list = document.getElementById('ov-order-list');
+  if (myOrders.length === 0) {
+    list.innerHTML = '<div class="empty-msg">No orders yet.</div>';
+    return;
+  }
+  const sorted = [...myOrders].sort((a,b) => (b.updated||0)-(a.updated||0)).slice(0,5);
+  list.innerHTML = sorted.map(o => `
+    <div class="item-row orders-row">
+      <div class="item-id">${esc(o.orderId)}</div>
+      <span class="badge ${esc(o.status)}">${esc(o.status)}</span>
+      <span class="item-muted">${esc(o.destination||'—')}</span>
+    </div>`).join('');
+}
+
+// ===== CATALOG =====
+function renderCatalog(items) {
+  const q = document.getElementById('basket-search').value.toLowerCase();
+  const filtered = items.filter(i =>
+    String(i.displayName||'').toLowerCase().includes(q) ||
+    String(i.name||'').toLowerCase().includes(q)
+  );
+  const list = document.getElementById('catalog-list');
+  if (filtered.length === 0) { list.innerHTML = '<div class="empty-msg">No items found.</div>'; return; }
+  list.innerHTML = filtered.slice(0,100).map(item => {
+    const count = Number(item.count||0);
+    const disabled = count <= 0 ? 'disabled' : '';
+    const safeId = 'ci_' + item.name.replace(/[^a-zA-Z0-9]/g,'_');
+    const safeName = item.name.replace(/'/g,"\\'");
+    return `<div class="catalog-row">
+      <div>
+        <div style="font-weight:700;font-size:12px">${esc(item.displayName||item.name)}</div>
+        <div style="font-size:10px;opacity:0.45">${esc(item.name)}</div>
+      </div>
+      <span style="opacity:0.6;font-size:11px">×${esc(count)}</span>
+      <div style="display:flex;gap:6px;align-items:center">
+        <input id="${safeId}" class="num-input" type="number" min="1" max="${count}" value="1" ${disabled}>
+        <button class="btn btn-sm" ${disabled} onclick="addToCart('${safeName}','${safeId}')">Add</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+document.getElementById('basket-search').addEventListener('input', () => renderCatalog(meStorage));
+
+function addToCart(name, inputId) {
+  const qty = Number(document.getElementById(inputId)?.value || 1);
+  if (!qty || qty < 1) return;
+  const item = meStorage.find(i => i.name === name);
+  if (!item) return;
+  const max = Number(item.count||0);
+  if (max <= 0) { showPopup('Unavailable', 'Item not in stock.', 'error'); return; }
+  const existing = cart.find(i => i.name === name);
+  if (existing) { existing.count = Math.min(existing.count + qty, max); }
+  else { cart.push({ name: item.name, displayName: item.displayName||item.name, count: Math.min(qty,max), max }); }
+  renderCart();
+}
+
+function removeFromCart(name) {
+  cart = cart.filter(i => i.name !== name);
+  renderCart();
+}
+
+function renderCart() {
+  const list = document.getElementById('cart-list');
+  const summary = document.getElementById('cart-summary');
+  if (cart.length === 0) { list.innerHTML = ''; summary.textContent = 'Cart empty'; return; }
+  const total = cart.reduce((s,i) => s + i.count, 0);
+  summary.textContent = cart.length + ' item type(s) · ' + total + ' total units';
+  list.innerHTML = cart.map(item => {
+    const safeName = item.name.replace(/'/g,"\\'");
+    return `<div class="cart-row">
+      <div>
+        <div style="font-weight:700">${esc(item.displayName)}</div>
+        <div style="opacity:0.45;font-size:10px">${esc(item.name)}</div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;justify-content:flex-end">
+        <input class="num-input" type="number" min="1" max="${item.max}" value="${item.count}"
+          onchange="updateCartQty('${safeName}',this.value)">
+        <button class="btn btn-sm btn-danger" onclick="removeFromCart('${safeName}')">×</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function updateCartQty(name, val) {
+  const entry = cart.find(i => i.name === name);
+  if (!entry) return;
+  entry.count = Math.max(1, Math.min(Number(val||1), entry.max));
+  renderCart();
+}
+// ===== ORDERS LIST =====
+function renderOrdersList() {
+  const list = document.getElementById('orders-list');
+  if (myOrders.length === 0) { list.innerHTML = '<div class="empty-msg">No orders found.</div>'; return; }
+  const sorted = [...myOrders].sort((a,b) => (b.updated||0)-(a.updated||0));
+  list.innerHTML = sorted.map(o => `
+    <div class="item-row orders-row" style="cursor:pointer" onclick="showTracking('${o.orderId}')">
+      <div>
+        <div class="item-id">${esc(o.orderId)}</div>
+        <div class="item-muted" style="font-size:10px">${esc(o.destination||'—')}</div>
+      </div>
+      <span class="badge ${esc(o.status)}">${esc(o.status)}</span>
+      <span class="item-muted">${esc(o.recipient||'—')}</span>
+    </div>`).join('');
+}
+
+function showTracking(orderId) {
+  const order = myOrders.find(o => o.orderId === orderId);
+  if (!order) return;
+  const pkgs = myPackages.filter(p => p.orderId === orderId);
+  const panel = document.getElementById('tracking-panel');
+  const wrap = document.getElementById('tracking-wrap');
+  panel.style.display = 'block';
+
+  const status = order.status || 'unknown';
+  const arrivedStates = ['delivered','ready_for_pickup','arrived'];
+  const transitStates = ['in_transit','transit','loading','loaded'];
+  let stage = 1;
+  if (arrivedStates.includes(status)) stage = 3;
+  else if (transitStates.includes(status) || pkgs.some(p => p.status === 'in_transit')) stage = 2;
+  else if (status === 'packed' || status === 'processing') stage = 1;
+
+  const nodeClass = n => stage > n ? 'done' : stage === n ? 'active' : '';
+
+  wrap.innerHTML = `
+    <div class="route-map">
+      <div class="route-progress s${stage}"></div>
+      <div class="route-node ${nodeClass(1)}"><div class="route-dot"></div><div class="route-label">Packed</div><div class="route-sub">${pkgs.length} pkg(s)</div></div>
+      <div class="route-node ${nodeClass(2)}"><div class="route-dot"></div><div class="route-label">Transit</div><div class="route-sub">${pkgs.filter(p=>p.currentNodeName).map(p=>p.currentNodeName).join(', ')||'—'}</div></div>
+      <div class="route-node ${nodeClass(3)}"><div class="route-dot"></div><div class="route-label">${esc(order.destination||'Destination')}</div><div class="route-sub">${esc(order.deliveryMode||'pickup')}</div></div>
+    </div>
+    <div class="track-rows">
+      <div class="track-row"><span>Order ID</span><strong>${esc(order.orderId)}</strong></div>
+      <div class="track-row"><span>Status</span><strong>${esc(order.status)}</strong></div>
+      <div class="track-row"><span>Destination</span><strong>${esc(order.destination||'—')}</strong></div>
+      ${order.recipient ? `<div class="track-row"><span>Recipient</span><strong>${esc(order.recipient)}</strong></div>` : ''}
+    </div>
+    ${pkgs.length > 0 ? `
+      <div class="section-title" style="margin-top:16px">Packages</div>
+      ${pkgs.map(p => `
+        <div class="item-row pkg-row">
+          <div class="item-id" style="font-size:11px">${esc(p.packageId)}</div>
+          <span class="badge ${esc(p.status)}">${esc(p.status)}</span>
+          <span class="item-muted">${esc(p.lastSeenLabel||'—')}</span>
+        </div>`).join('')}
+    ` : ''}
+  `;
+
+  wrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ===== CRAFT RESULT =====
+function handleCraftResult(data) {
+  if (data.status === 'done') { toast('Craft queued ✓'); }
+  else if (data.status === 'partial') { showPopup('Partial', 'Materials missing for full craft.', 'warn'); }
+  else if (data.status === 'failed') { showPopup('Craft Failed', data.reason || 'Unknown error.', 'error'); }
+}
+
+// ===== BROADCAST HANDLER FOR DATA =====
+// Re-wire message handler after client is set up
+function wireMessages() {
+  client.on('message', (topic, payload) => {
+    let data;
+    try { data = JSON.parse(payload.toString()); } catch(e) { return; }
+
+    // Auth response — only for this client
+    if (topic === 'axis/auth/res/' + clientId) {
+      if (pendingAuth) { pendingAuth(data); pendingAuth = null; }
+      return;
+    }
+
+    if (topic !== TOPIC_OUT) return;
+
+    if (data.items && Array.isArray(data.items)) { handleMeUpdate(data.items); return; }
+
+    if (data.event === 'players_online' && Array.isArray(data.players)) {
+      const sel = document.getElementById('reg-mcname');
+      if (sel) {
+        sel.innerHTML = '<option value="">— select your name —</option>';
+        data.players.forEach(p => {
+          const opt = document.createElement('option');
+          opt.value = p; opt.textContent = p; sel.appendChild(opt);
+        });
+      }
+      return;
+    }
+
+    if (data.event === 'orders_list' && Array.isArray(data.orders)) {
+      myOrders = data.orders.filter(o => !currentUser || o.recipient === currentUser.mcName || o.recipient === currentUser.username);
+      renderOrdersList(); updateOverview(); return;
+    }
+
+    if (data.event === 'packages_list' && Array.isArray(data.packages)) {
+      myPackages = data.packages; updateOverview(); return;
+    }
+
+    if (data.event === 'order_created' || data.event === 'order_updated') { refreshMyOrders(); return; }
+    if (data.event === 'package_registered' || data.event === 'package_event') { refreshMyPackages(); return; }
+    if (data.event === 'command_result') { handleCraftResult(data); return; }
+  });
+}
+
+// ===== INIT =====
+document.addEventListener('DOMContentLoaded', () => {
+  bindUI();
+  bindUIListeners();
+
+  try {
+    if (typeof mqtt === 'undefined') {
+      console.error('MQTT.js not loaded');
+      document.getElementById('nav-user').textContent = 'MQTT lib failed to load';
+      return;
+    }
+    connectMQTT();
+    setTimeout(() => { if (client) wireMessages(); }, 500);
+  } catch(e) {
+    console.error('MQTT init failed:', e);
+    document.getElementById('nav-user').textContent = 'Connection error';
+  }
+});
+</script>
+</body>
+</html>
