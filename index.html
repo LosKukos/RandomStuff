@@ -506,7 +506,7 @@ function bindUIListeners() {
       errorEl.textContent = msgs[res.error] || res.error || 'Login failed.'; return;
     }
     sessionToken = res.sessionToken;
-    currentUser  = { userId: res.userId, username: res.username, mcName: res.mcName };
+    currentUser  = { userId: res.userId, username: res.username, mcName: res.mcName, displayName: res.displayName };
     localStorage.setItem('axis_token', sessionToken);
     localStorage.setItem('axis_user', JSON.stringify(currentUser));
     onLoggedIn(currentUser);
@@ -601,7 +601,7 @@ function bindUIListeners() {
 } // end bindUIListeners
 
 function onLoggedIn(user) {
-  document.getElementById('nav-user').textContent = user.username + ' (' + user.mcName + ')';
+  document.getElementById('nav-user').textContent = (user.displayName || user.username) + ' (' + user.mcName + ')';
   document.getElementById('logout-btn').style.display = 'block';
 
   // Auto-fill recipient from profile
