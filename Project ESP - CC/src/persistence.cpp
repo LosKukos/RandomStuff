@@ -196,6 +196,7 @@ void saveUsers() {
     o["username"]     = user.username;
     o["password"]     = user.password;
     o["mcName"]       = user.mcName;
+    o["displayName"]  = user.displayName;
     o["sessionToken"] = user.sessionToken;
     o["created"]      = user.created;
     o["lastSeen"]     = user.lastSeen;
@@ -227,6 +228,7 @@ void loadUsers() {
     user.username     = o["username"]     | "";
     user.password     = o["password"]     | "";
     user.mcName       = o["mcName"]       | "";
+    user.displayName  = o["displayName"]  | "";
     user.sessionToken = o["sessionToken"] | "";
     user.created      = o["created"]      | 0;
     user.lastSeen     = o["lastSeen"]     | 0;

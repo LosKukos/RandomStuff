@@ -85,6 +85,7 @@ struct UserRecord {
   String username;
   String password;
   String mcName;
+  String displayName;
   String sessionToken;
   uint32_t created = 0;
   uint32_t lastSeen = 0;

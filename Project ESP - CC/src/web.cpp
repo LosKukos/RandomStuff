@@ -476,6 +476,7 @@ void setupWeb() {
         d["userId"]       = user.userId;
         d["username"]     = user.username;
         d["mcName"]       = user.mcName;
+        d["displayName"]  = user.displayName;
         d["sessionToken"] = user.sessionToken;
       }));
     });
@@ -495,6 +496,7 @@ void setupWeb() {
         d["userId"]       = user->userId;
         d["username"]     = user->username;
         d["mcName"]       = user->mcName;
+        d["displayName"]  = user->displayName;
         d["sessionToken"] = user->sessionToken;
       }));
     });

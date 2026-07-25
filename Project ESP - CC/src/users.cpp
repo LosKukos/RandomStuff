@@ -50,12 +50,13 @@ String generateUserId() {
 // ===== SERIALIZATION =====
 
 void serializeUser(JsonObject o, const UserRecord& user, bool includePrivate) {
-  o["userId"]   = user.userId;
-  o["username"] = user.username;
-  o["mcName"]   = user.mcName;
-  o["created"]  = user.created;
-  o["lastSeen"] = user.lastSeen;
-  o["online"]   = user.sessionToken.length() > 0;
+  o["userId"]      = user.userId;
+  o["username"]    = user.username;
+  o["mcName"]      = user.mcName;
+  o["displayName"] = user.displayName;
+  o["created"]     = user.created;
+  o["lastSeen"]    = user.lastSeen;
+  o["online"]      = user.sessionToken.length() > 0;
 
   if (includePrivate) {
     o["sessionToken"] = user.sessionToken;
@@ -68,6 +69,8 @@ bool registerUserFromJson(JsonDocument& doc, UserRecord& outUser, String& err) {
   String username = doc["username"] | "";
   String password = doc["password"] | "";
   String mcName   = doc["mcName"]   | "";
+  String displayName = doc["displayName"] | "";
+  if (displayName.isEmpty()) displayName = username;
 
   if (username.isEmpty()) { err = "missing_username"; return false; }
   if (password.isEmpty()) { err = "missing_password"; return false; }
@@ -84,6 +87,7 @@ bool registerUserFromJson(JsonDocument& doc, UserRecord& outUser, String& err) {
   outUser.username     = username;
   outUser.password     = password;
   outUser.mcName       = mcName;
+  outUser.displayName  = displayName;
   outUser.sessionToken = generateToken();
   outUser.created      = millis();
   outUser.lastSeen     = millis();

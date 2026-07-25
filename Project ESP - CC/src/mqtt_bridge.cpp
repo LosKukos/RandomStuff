@@ -70,6 +70,7 @@ static void handleAuthMessage(const String& msg) {
     res["userId"]       = found->userId;
     res["username"]     = found->username;
     res["mcName"]       = found->mcName;
+    res["displayName"]  = found->displayName;
     res["sessionToken"] = found->sessionToken;
     String out; serializeJson(res, out);
     mqtt.publish(responseTopic.c_str(), out.c_str());
@@ -104,6 +105,7 @@ static void handleAuthMessage(const String& msg) {
     res["userId"]       = user.userId;
     res["username"]     = user.username;
     res["mcName"]       = user.mcName;
+    res["displayName"]  = user.displayName;
     res["sessionToken"] = user.sessionToken;
     String out; serializeJson(res, out);
     mqtt.publish(responseTopic.c_str(), out.c_str());
