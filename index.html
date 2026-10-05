@@ -211,6 +211,7 @@ html,body{margin:0;padding:0;min-height:100%;font-family:"DM Mono",monospace;bac
               <select class="form-select" id="reg-mcname">
                 <option value="">— select your ingame name —</option>
               </select>
+              <input class="form-input" id="reg-mcname-manual" type="text" placeholder="or type your ingame name (test mode)" style="display:none;margin-top:6px">
               <div style="font-size:10px;opacity:0.4;margin-top:4px;">Must match your ingame name. Must be unique.</div>
             </div>
             <div class="form-group">
@@ -348,14 +349,20 @@ html,body{margin:0;padding:0;min-height:100%;font-family:"DM Mono",monospace;bac
 
 <script>
 // ===== CONFIG =====
-const MQTT_URL  = 'wss://136587ce4f3f4e959935544be4c8ac46.s1.eu.hivemq.cloud:8884/mqtt';
-const MQTT_USER = 'ESP-MC';
-const MQTT_PASS = 'Admin123';
+// Broker: EMQX Cloud Serverless. Tohle heslo je na statickem webu VEREJNE viditelne -
+// proto pro ostry provoz samostatny ucet "web" s omezenymi pravy (ACL), ne ucet ESP.
+const MQTT_URL  = 'wss://tc312247.ala.us-east-1.emqxsl.com:8084/mqtt';
+const MQTT_USER = 'test';
+const MQTT_PASS = 'admin123';
 
 const TOPIC_OUT  = 'axis/broadcast';
 const TOPIC_CMD  = 'axis/cmd';
 const TOPIC_AUTH = 'axis/auth';
 const TOPIC_RES  = 'axis/res/';   // soukrome odpovedi: axis/res/<clientId>
+
+// DOCASNE PRO TESTOVANI: pokud ESP nema seznam hracu, dovol napsat MC jmeno rucne pri registraci.
+// PRED OSTRYM PROVOZEM NASTAV NA false (jinak si kdokoli muze nahlasit cizi jmeno).
+const DEV_ALLOW_MANUAL_MCNAME = true;
 
 // ===== STATE =====
 let client        = null;
@@ -520,7 +527,8 @@ function bindUIListeners() {
     const username    = document.getElementById('reg-username').value.trim();
     const password    = document.getElementById('reg-password').value;
     const mcNameSel   = document.getElementById('reg-mcname').value.trim();
-    const mcName      = mcNameSel;
+    const mcNameManual = DEV_ALLOW_MANUAL_MCNAME ? document.getElementById('reg-mcname-manual').value.trim() : '';
+    const mcName      = mcNameSel || mcNameManual;
     const displayName = document.getElementById('reg-displayname').value.trim();
     const errorEl     = document.getElementById('reg-error');
     errorEl.textContent = '';
@@ -882,6 +890,7 @@ function wireMessages() {
 
 // ===== INIT =====
 document.addEventListener('DOMContentLoaded', () => {
+  if (DEV_ALLOW_MANUAL_MCNAME) { const m = document.getElementById('reg-mcname-manual'); if (m) m.style.display = 'block'; }
   const cidEl = document.getElementById('display-cid');
   if (cidEl) cidEl.textContent = clientId;
 
