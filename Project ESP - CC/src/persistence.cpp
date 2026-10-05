@@ -29,7 +29,7 @@ void loadConfig() {
 }
 
 void saveQueue() {
-  StaticJsonDocument<12288> doc; JsonArray arr = doc.to<JsonArray>();
+  DynamicJsonDocument doc(12288); JsonArray arr = doc.to<JsonArray>();
   for (const auto& cmd : commandQueue) {
     if (cmd.status == "done" || cmd.status == "failed" || cmd.status == "partial" || cmd.status == "timeout") continue;
     JsonObject o = arr.createNestedObject();
@@ -47,7 +47,7 @@ void loadQueue() {
   File f = LittleFS.open("/queue.json", "r");
   if (!f) { addLog("[FS] failed to open /queue.json for read"); return; }
   if (f.size() == 0) { addLog("[FS] queue.json empty"); f.close(); return; }
-  StaticJsonDocument<12288> doc;
+  DynamicJsonDocument doc(12288);
   DeserializationError err = deserializeJson(doc, f); f.close();
   if (err) { addLog("[FS] queue.json parse failed"); return; }
   commandQueue.clear();
@@ -98,7 +98,7 @@ void loadOrders() {
     OrderRecord order;
     order.orderId = o["orderId"] | ""; order.status = o["status"] | "pending";
     order.destination = o["destination"] | ""; order.deliveryMode = o["deliveryMode"] | "";
-    order.recipient = o["recipient"] | ""; order.created = o["created"] | 0; order.updated = o["updated"] | 0;
+    order.recipient = o["recipient"] | ""; order.ownerId = o["ownerId"] | ""; order.created = o["created"] | 0; order.updated = o["updated"] | 0;
     for (JsonObject itemObj : o["items"].as<JsonArray>()) {
       OrderItem item;
       item.name = itemObj["name"] | ""; item.count = itemObj["count"] | 0;

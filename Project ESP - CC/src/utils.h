@@ -4,8 +4,10 @@
 #include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
 #include <functional>
+#include <vector>
 
 void addLog(const String& msg);
+std::vector<String> getLogsCopy();
 String genId();
 String genOrderId();
 bool isSTA(AsyncWebServerRequest* req);

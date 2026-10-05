@@ -42,6 +42,7 @@ struct OrderRecord {
   String destination;
   String deliveryMode;
   String recipient;
+  String ownerId;   // userId zakaznika (remote); prazdne = zalozeno lokalne/adminem
   uint32_t created = 0;
   uint32_t updated = 0;
   std::vector<OrderItem> items;

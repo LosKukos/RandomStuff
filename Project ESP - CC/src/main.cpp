@@ -8,8 +8,10 @@
 #include "command_task.h"
 #include "time_service.h"
 #include "mqtt_bridge.h"
+#include "sync.h"
 
 void setup() {
+  initSync();
   Serial.begin(115200);
   delay(300);
 

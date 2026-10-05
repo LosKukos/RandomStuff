@@ -8,20 +8,31 @@
 #include <WiFiClientSecure.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
+#include <deque>
+#include "sync.h"
 
-#define MQTT_HOST  "136587ce4f3f4e959935544be4c8ac46.s1.eu.hivemq.cloud"
-#define MQTT_PORT  8883
-#define MQTT_USER  "ESP-MC"
-#define MQTT_PASS  "Admin123"
+#include "secrets.h"   // MQTT_HOST, MQTT_PORT, MQTT_USER, MQTT_PASS (mimo git)
 #define MQTT_ID    "axis-esp32"
 
 #define TOPIC_OUT       "axis/broadcast"
 #define TOPIC_CMD       "axis/cmd"
 #define TOPIC_AUTH      "axis/auth"
 #define TOPIC_AUTH_RES  "axis/auth/res/"
+#define TOPIC_RES       "axis/res/"      // soukrome odpovedi na dotazy: axis/res/<clientId>
+
+#define MQTT_BUF 6144   // i prichozi zpravy: vetsi nez buffer PubSubClient tise zahodi
+#define OUTBOX_MAX 16
 
 static WiFiClientSecure tlsClient;
 static PubSubClient mqtt(tlsClient);
+
+// MQTT klienta pouziva VYHRADNE commandTask (mqttLoop + callbacky).
+// Ostatni tasky jen davaji zpravy do outboxu (mqttBroadcast) - zadne sdileni klienta.
+static std::deque<String> outbox;
+static SemaphoreHandle_t outboxMutex = nullptr;
+static volatile bool mqttUp = false;
+
+static void publishOut(const String& topic, const String& json);
 
 // ===== AUTH HANDLER =====
 
@@ -78,6 +89,12 @@ static void handleAuthMessage(const String& msg) {
     return;
   }
 
+  if (action == "players") {
+    // Verejne: seznam hracu online pro vyber v registraci (jeste nejsme prihlaseni, token nemame)
+    publishOut(responseTopic, String("{\"ok\":true,\"event\":\"players_online\",\"players\":") + playersOnline + "}");
+    return;
+  }
+
   if (action == "register") {
     DynamicJsonDocument regDoc(512);
     regDoc["username"] = doc["username"] | "";
@@ -117,73 +134,139 @@ static void handleAuthMessage(const String& msg) {
 }
 
 // ===== CMD HANDLER =====
+// Odpovedi jdou VZDY soukrome na axis/res/<clientId> (nikdy na broadcast).
+// Povolene typy (whitelist): get_me, get_orders_by_user, get_packages_by_user, create_order.
+
+#define MAX_ORDER_ITEMS      30
+#define MAX_ITEM_COUNT       10000
+#define MAX_OPEN_ORDERS_USER 10
+
+static void replyTo(const String& clientId, const String& json) {
+  publishOut(String(TOPIC_RES) + clientId, json);
+}
+
+static void replyResult(const String& clientId, const String& type, bool ok, const char* error, const String& orderId = "") {
+  StaticJsonDocument<256> r;
+  r["event"] = "cmd_result";
+  r["type"]  = type;
+  r["ok"]    = ok;
+  if (error && error[0]) r["error"] = error;
+  if (!orderId.isEmpty()) r["orderId"] = orderId;
+  String out; serializeJson(r, out);
+  replyTo(clientId, out);
+}
+
+static void handleCreateOrder(const String& clientId, JsonDocument& doc, UserRecord* user) {
+  JsonObjectConst p = doc["payload"].as<JsonObjectConst>();
+  if (p.isNull()) { replyResult(clientId, "create_order", false, "invalid_payload"); return; }
+
+  String destination  = p["destination"]  | "";
+  String deliveryMode = p["deliveryMode"] | "";
+  if (destination.isEmpty() || destination.length() > 64)   { replyResult(clientId, "create_order", false, "invalid_destination");  return; }
+  if (deliveryMode.isEmpty() || deliveryMode.length() > 32) { replyResult(clientId, "create_order", false, "invalid_deliveryMode"); return; }
+
+  JsonArrayConst items = p["items"].as<JsonArrayConst>();
+  if (items.isNull() || items.size() == 0)        { replyResult(clientId, "create_order", false, "missing_items");  return; }
+  if (items.size() > MAX_ORDER_ITEMS)             { replyResult(clientId, "create_order", false, "too_many_items"); return; }
+
+  int open = 0;
+  for (const auto& o : orders)
+    if (o.ownerId == user->userId && (o.status == "pending" || o.status == "processing")) open++;
+  if (open >= MAX_OPEN_ORDERS_USER) { replyResult(clientId, "create_order", false, "too_many_open_orders"); return; }
+
+  // Sestavime cisty dokument - recipient a owner urcuje SERVER (z tokenu), ne klient.
+  DynamicJsonDocument od(4096);
+  od["destination"]  = destination;
+  od["deliveryMode"] = deliveryMode;
+  od["recipient"]    = user->mcName;
+  JsonArray arr = od.createNestedArray("items");
+  for (JsonObjectConst it : items) {
+    int count = it["count"] | 0;
+    if (count <= 0 || count > MAX_ITEM_COUNT) { replyResult(clientId, "create_order", false, "invalid_item"); return; }
+    JsonObject o = arr.createNestedObject();
+    o["name"]  = it["name"] | "";
+    o["count"] = count;
+  }
+
+  OrderRecord order; String err;
+  if (!createOrderFromJson(od, order, err)) { replyResult(clientId, "create_order", false, err.c_str()); return; }
+  order.ownerId = user->userId;
+  orders.push_back(order);
+  ordersDirty = true;
+  addLog("[ORDER] created " + order.orderId + " by " + user->username + " (MQTT)");
+
+  StaticJsonDocument<256> evt;
+  evt["event"] = "order_created"; evt["orderId"] = order.orderId; evt["status"] = order.status;
+  String evtOut; serializeJson(evt, evtOut);
+  mqttBroadcast(evtOut);   // lokalni WS plny, MQTT jen {"event":"order_created"}
+
+  replyResult(clientId, "create_order", true, nullptr, order.orderId);
+}
 
 static void handleCmdMessage(const String& msg) {
-  StaticJsonDocument<1024> doc;
-  if (deserializeJson(doc, msg)) {
-    addLog("[MQTT] cmd: invalid JSON");
+  DynamicJsonDocument doc(8192);
+  DeserializationError jerr = deserializeJson(doc, msg);
+  if (jerr) {
+    addLog(String("[MQTT] cmd: invalid JSON (") + jerr.c_str() + ")");
     return;
   }
 
-  // Token verification
-  String token = doc["token"] | "";
+  String clientId = doc["clientId"] | "";
+  String token    = doc["token"]    | "";
+  String type     = doc["type"]     | "";
+
+  if (clientId.isEmpty()) { addLog("[MQTT] cmd: missing clientId"); return; }
+
   UserRecord* user = nullptr;
   if (!verifyToken(token, user)) {
     addLog("[MQTT] cmd: invalid token");
+    replyResult(clientId, type, false, "invalid_token");
     return;
   }
-  usersDirty = true;
-
-  String type = doc["type"] | "";
-  if (type.isEmpty()) return;
-
-  // ===== DATA REQUEST HANDLERS =====
 
   if (type == "get_me") {
-    // Broadcast current ME snapshot
-    mqttBroadcast(meStorage);
+    replyTo(clientId, meStorage);
     return;
   }
 
   if (type == "get_orders_by_user") {
-    // Broadcast orders where recipient matches user's mcName or username
     DynamicJsonDocument outDoc(24576);
     outDoc["event"] = "orders_list";
     JsonArray arr = outDoc.createNestedArray("orders");
     for (const auto& order : orders) {
-      if (order.recipient == user->mcName || order.recipient == user->username) {
+      if (userOwnsOrder(order, *user)) {
         JsonObject o = arr.createNestedObject();
         serializeOrder(o, order);
       }
     }
     String out; serializeJson(outDoc, out);
-    mqttBroadcast(out);
+    replyTo(clientId, out);
     return;
   }
 
   if (type == "get_packages_by_user") {
-    // Broadcast packages for user's orders
     DynamicJsonDocument outDoc(32768);
     outDoc["event"] = "packages_list";
     JsonArray arr = outDoc.createNestedArray("packages");
     for (const auto& pkg : packages) {
-      if (pkg.recipient == user->mcName || pkg.recipient == user->username) {
+      if (userOwnsPackage(pkg, *user)) {
         JsonObject o = arr.createNestedObject();
         serializePackage(o, pkg);
       }
     }
     String out; serializeJson(outDoc, out);
-    mqttBroadcast(out);
+    replyTo(clientId, out);
     return;
   }
 
-  // ===== COMMAND QUEUE =====
-  String payloadJson = "{}";
-  if (doc["payload"].is<JsonVariantConst>())
-    serializeJson(doc["payload"], payloadJson);
+  if (type == "create_order") {
+    handleCreateOrder(clientId, doc, user);
+    return;
+  }
 
-  pushCommand(type, payloadJson);
-  addLog("[MQTT] cmd: " + type + " by " + user->username);
+  // Cokoli jineho z internetu se do fronty prikazu pro CC NEDOSTANE.
+  addLog("[MQTT] cmd: rejected type '" + type + "' from " + user->username);
+  replyResult(clientId, type, false, "unknown_type");
 }
 
 // ===== MQTT CALLBACK =====
@@ -196,11 +279,13 @@ static void onMessage(char* topic, byte* payload, unsigned int length) {
   String t = String(topic);
 
   if (t == TOPIC_AUTH) {
+    DataLock lock;
     handleAuthMessage(msg);
     return;
   }
 
   if (t == TOPIC_CMD) {
+    DataLock lock;
     handleCmdMessage(msg);
     return;
   }
@@ -227,20 +312,82 @@ static void reconnect() {
 void initMqttBridge() {
   mqtt.setServer(MQTT_HOST, MQTT_PORT);
   mqtt.setCallback(onMessage);
-  mqtt.setBufferSize(4096);
+  mqtt.setBufferSize(MQTT_BUF);
+  if (!outboxMutex) outboxMutex = xSemaphoreCreateMutex();
   mqtt.setKeepAlive(30);
   addLog("[MQTT] bridge initialized");
 }
 
+static void enqueueOut(const String& json) {
+  if (!mqttUp || !outboxMutex) return;    // MQTT neni pripojene -> nic nehromadime
+  xSemaphoreTake(outboxMutex, portMAX_DELAY);
+  if (outbox.size() >= OUTBOX_MAX) outbox.pop_front();   // zahodit nejstarsi
+  outbox.push_back(json);
+  xSemaphoreGive(outboxMutex);
+}
+
+// Co smi ven na MQTT broadcast: jen "refresh" signaly bez dat. Hledame podretezec,
+// takze zadny parsing a zadna pamet. Vse ostatni zustava jen na lokalnim WS.
+static bool remoteView(const String& json, String& out) {
+  static const char* const EVENTS[] = {"order_created", "order_updated", "package_registered", "package_event"};
+  for (const char* ev : EVENTS) {
+    if (json.indexOf(String("\"event\":\"") + ev + "\"") >= 0) {
+      out = String("{\"event\":\"") + ev + "\"}";
+      return true;
+    }
+  }
+  return false;
+}
+
 void mqttBroadcast(const String& json) {
+  ws.textAll(json);                       // lokalni admin panel: vse
+  String r;
+  if (remoteView(json, r)) enqueueOut(r); // remote: jen signal
+}
+
+void mqttBroadcastPublic(const String& json) {
   ws.textAll(json);
-  if (mqtt.connected()) {
-    mqtt.publish(TOPIC_OUT, json.c_str());
+  enqueueOut(json);
+}
+
+// Zpravy vetsi nez buffer (ME snapshot, seznamy baliku) se posilaji streamem.
+static void publishOut(const String& topic, const String& json) {
+  size_t len = json.length();
+  if (len + topic.length() + 16 < MQTT_BUF) {
+    mqtt.publish(topic.c_str(), json.c_str());
+    return;
+  }
+  if (!mqtt.beginPublish(topic.c_str(), len, false)) {
+    addLog("[MQTT] beginPublish failed, len=" + String(len));
+    return;
+  }
+  const uint8_t* p = (const uint8_t*)json.c_str();
+  size_t off = 0;
+  while (off < len) {
+    size_t n = len - off < 512 ? len - off : 512;
+    mqtt.write(p + off, n);
+    off += n;
+  }
+  mqtt.endPublish();
+}
+
+static void drainOutbox() {
+  for (int i = 0; i < 8 && mqttUp; i++) {
+    String msg;
+    xSemaphoreTake(outboxMutex, portMAX_DELAY);
+    if (outbox.empty()) { xSemaphoreGive(outboxMutex); return; }
+    msg = outbox.front();
+    outbox.pop_front();
+    xSemaphoreGive(outboxMutex);
+    publishOut(TOPIC_OUT, msg);
   }
 }
 
 void mqttLoop() {
-  if (!staConnected) return;
-  if (!mqtt.connected()) reconnect();
+  if (!staConnected) { mqttUp = false; return; }
+  if (!mqtt.connected()) { mqttUp = false; reconnect(); }
+  mqttUp = mqtt.connected();
+  if (!mqttUp) return;
   mqtt.loop();
+  drainOutbox();
 }

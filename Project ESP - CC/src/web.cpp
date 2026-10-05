@@ -9,12 +9,37 @@
 #include "users.h"
 #include "time_service.h"
 #include "mqtt_bridge.h"
+#include "sync.h"
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 #include <WiFi.h>
 
 static void sendJson(AsyncWebServerRequest* req, int code, const String& body) {
   req->send(code, "application/json", body);
+}
+
+// Skládá tělo POST requestu z více TCP chunků a handler zavolá až po posledním.
+static ArBodyHandlerFunction bodyHandler(std::function<void(AsyncWebServerRequest*, const String&)> fn) {
+  return [fn](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+    if (index == 0) {
+      if (req->_tempObject) { free(req->_tempObject); req->_tempObject = nullptr; }
+      req->_tempObject = malloc(total + 1);
+    }
+    char* buf = (char*)req->_tempObject;
+    if (!buf) {
+      if (index + len >= total) sendJson(req, 500, makeErrorResponse("out_of_memory"));
+      return;
+    }
+    memcpy(buf + index, data, len);
+    if (index + len >= total) {
+      buf[total] = 0;
+      String body(buf);
+      free(req->_tempObject);
+      req->_tempObject = nullptr;
+      DataLock lock;  // vsechny POST handlery bezi pod zamkem
+      fn(req, body);
+    }
+  };
 }
 
 static void emitEvent(const String& json) {
@@ -93,18 +118,18 @@ void setupWeb() {
   server.serveStatic("/js/", LittleFS, "/js/");
 
   server.on("/api/config", HTTP_POST, [](AsyncWebServerRequest* req) {}, nullptr,
-    [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
-      (void)index; (void)total;
+    bodyHandler([](AsyncWebServerRequest* req, const String& body) {
       if (!isAP(req)) { sendJson(req, 403, makeErrorResponse("ap_only")); return; }
-      String body = readBody(data, len); StaticJsonDocument<256> doc;
+      StaticJsonDocument<256> doc;
       if (deserializeJson(doc, body)) { sendJson(req, 400, makeErrorResponse("invalid_json")); return; }
       String ssid = doc["ssid"] | ""; String pass = doc["pass"] | "";
       if (ssid.isEmpty()) { sendJson(req, 400, makeErrorResponse("missing_ssid")); return; }
       staSsid = ssid; staPass = pass; saveConfig();
       sendJson(req, 200, makeOkResponse([](JsonObject data) { data["saved"] = true; }));
-    });
+    }));
 
   server.on("/api/debug", HTTP_GET, [](AsyncWebServerRequest* req) {
+    DataLock lock;
     if (!isAP(req)) { sendJson(req, 403, makeErrorResponse("ap_only")); return; }
     TimeSnapshot t = getTimeSnapshot();
     sendJson(req, 200, makeOkResponse([&](JsonObject data) {
@@ -119,13 +144,15 @@ void setupWeb() {
 
   server.on("/api/logs", HTTP_GET, [](AsyncWebServerRequest* req) {
     if (!isAP(req)) { sendJson(req, 403, makeErrorResponse("ap_only")); return; }
-    StaticJsonDocument<6144> doc; doc["ok"] = true;
+    std::vector<String> snapshot = getLogsCopy();
+    DynamicJsonDocument doc(8192); doc["ok"] = true;
     JsonArray arr = doc.createNestedArray("data");
-    for (const auto& line : logs) arr.add(line);
+    for (const auto& line : snapshot) arr.add(line);
     String out; serializeJson(doc, out); sendJson(req, 200, out);
   });
 
   server.on("/api/status", HTTP_GET, [](AsyncWebServerRequest* req) {
+    DataLock lock;
     if (!isSTA(req)) { sendJson(req, 403, makeErrorResponse("sta_only")); return; }
     TimeSnapshot t = getTimeSnapshot();
     sendJson(req, 200, makeOkResponse([&](JsonObject data) {
@@ -137,10 +164,9 @@ void setupWeb() {
   });
 
   server.on("/api/command", HTTP_POST, [](AsyncWebServerRequest* req) {}, nullptr,
-    [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
-      (void)index; (void)total;
+    bodyHandler([](AsyncWebServerRequest* req, const String& body) {
       if (!isSTA(req)) { sendJson(req, 403, makeErrorResponse("sta_only")); return; }
-      String body = readBody(data, len); StaticJsonDocument<768> doc;
+      StaticJsonDocument<768> doc;
       if (deserializeJson(doc, body)) { sendJson(req, 400, makeErrorResponse("invalid_json")); return; }
       String type = doc["type"] | "";
       if (type.isEmpty()) { sendJson(req, 400, makeErrorResponse("missing_type")); return; }
@@ -149,13 +175,12 @@ void setupWeb() {
       pushCommand(type, payloadJson);
       const String queuedId = commandQueue.back().id;
       sendJson(req, 200, makeOkResponse([&queuedId](JsonObject data) { data["queued"] = true; data["id"] = queuedId; }));
-    });
+    }));
 
   server.on("/api/ack", HTTP_POST, [](AsyncWebServerRequest* req) {}, nullptr,
-    [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
-      (void)index; (void)total;
+    bodyHandler([](AsyncWebServerRequest* req, const String& body) {
       if (!isSTA(req)) { sendJson(req, 403, makeErrorResponse("sta_only")); return; }
-      String body = readBody(data, len); StaticJsonDocument<256> doc;
+      StaticJsonDocument<256> doc;
       if (deserializeJson(doc, body)) { sendJson(req, 400, makeErrorResponse("invalid_json")); return; }
       String id = doc["id"] | "";
       if (id.isEmpty()) { sendJson(req, 400, makeErrorResponse("missing_id")); return; }
@@ -163,13 +188,12 @@ void setupWeb() {
       if (!cmd) { sendJson(req, 404, makeErrorResponse("command_not_found")); return; }
       cmd->status = "accepted"; cmd->updated = millis(); queueDirty = true;
       sendJson(req, 200, makeOkResponse([&id](JsonObject data) { data["id"] = id; data["status"] = "accepted"; }));
-    });
+    }));
 
   server.on("/api/result", HTTP_POST, [](AsyncWebServerRequest* req) {}, nullptr,
-    [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
-      (void)index; (void)total;
+    bodyHandler([](AsyncWebServerRequest* req, const String& body) {
       if (!isSTA(req)) { sendJson(req, 403, makeErrorResponse("sta_only")); return; }
-      String body = readBody(data, len); StaticJsonDocument<4096> doc;
+      StaticJsonDocument<4096> doc;
       if (deserializeJson(doc, body)) { sendJson(req, 400, makeErrorResponse("invalid_json")); return; }
       String id = doc["id"] | ""; String status = doc["status"] | "";
       if (id.isEmpty() || status.isEmpty()) { sendJson(req, 400, makeErrorResponse("missing_fields")); return; }
@@ -196,27 +220,26 @@ void setupWeb() {
         if (doc.containsKey("reason")) data["reason"] = doc["reason"];
       }));
       addLog("[CMD] result " + id + " -> " + status);
-    });
+    }));
 
   server.on("/api/me/list", HTTP_POST, [](AsyncWebServerRequest* req) {}, nullptr,
-    [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
-      (void)index; (void)total;
+    bodyHandler([](AsyncWebServerRequest* req, const String& body) {
       if (!isSTA(req)) { sendJson(req, 403, makeErrorResponse("sta_only")); return; }
-      meStorage = readBody(data, len); meLastUpdate = millis(); meDirty = true;
+      meStorage = body; meLastUpdate = millis(); meDirty = true;
       addLog("[ME] storage updated");
       sendJson(req, 200, makeOkResponse([](JsonObject data) { data["updated"] = true; }));
-    });
+    }));
 
   server.on("/api/me/list", HTTP_GET, [](AsyncWebServerRequest* req) {
+    DataLock lock;
     if (!isSTA(req)) { sendJson(req, 403, makeErrorResponse("sta_only")); return; }
     sendJson(req, 200, meStorage);
   });
 
   server.on("/api/node/register", HTTP_POST, [](AsyncWebServerRequest* req) {}, nullptr,
-    [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
-      (void)index; (void)total;
+    bodyHandler([](AsyncWebServerRequest* req, const String& body) {
       if (!isSTA(req)) { sendJson(req, 403, makeErrorResponse("sta_only")); return; }
-      String body = readBody(data, len); DynamicJsonDocument doc(1024);
+      DynamicJsonDocument doc(1024);
       if (deserializeJson(doc, body)) { sendJson(req, 400, makeErrorResponse("invalid_json")); return; }
       NodeRecord node; bool existed = false; String err;
       if (!registerNodeFromJson(doc, node, existed, err)) { sendJson(req, 400, makeErrorResponse(err.c_str())); return; }
@@ -230,13 +253,12 @@ void setupWeb() {
         data["nodeId"] = node.nodeId; data["nodeName"] = node.nodeName; data["existed"] = existed;
         data["lastSeenLabel"] = node.lastSeenLabel; data["lastSeenIso"] = node.lastSeenIso;
       }));
-    });
+    }));
 
   server.on("/api/node/heartbeat", HTTP_POST, [](AsyncWebServerRequest* req) {}, nullptr,
-    [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
-      (void)index; (void)total;
+    bodyHandler([](AsyncWebServerRequest* req, const String& body) {
       if (!isSTA(req)) { sendJson(req, 403, makeErrorResponse("sta_only")); return; }
-      String body = readBody(data, len); DynamicJsonDocument doc(1024);
+      DynamicJsonDocument doc(1024);
       if (deserializeJson(doc, body)) { sendJson(req, 400, makeErrorResponse("invalid_json")); return; }
       NodeRecord* node = nullptr; String err;
       if (!heartbeatNodeFromJson(doc, node, err)) { sendJson(req, 404, makeErrorResponse(err.c_str())); return; }
@@ -245,9 +267,10 @@ void setupWeb() {
         data["nodeId"] = node->nodeId; data["nodeName"] = node->nodeName;
         data["lastSeenLabel"] = node->lastSeenLabel; data["lastSeenIso"] = node->lastSeenIso;
       }));
-    });
+    }));
 
   server.on("/api/nodes/list", HTTP_GET, [](AsyncWebServerRequest* req) {
+    DataLock lock;
     if (!isSTA(req)) { sendJson(req, 403, makeErrorResponse("sta_only")); return; }
     DynamicJsonDocument doc(12288); doc["ok"] = true;
     JsonObject dataObj = doc.createNestedObject("data"); JsonArray arr = dataObj.createNestedArray("nodes");
@@ -256,10 +279,9 @@ void setupWeb() {
   });
 
   server.on("/api/orders/create", HTTP_POST, [](AsyncWebServerRequest* req) {}, nullptr,
-    [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
-      (void)index; (void)total;
+    bodyHandler([](AsyncWebServerRequest* req, const String& body) {
       if (!isSTA(req)) { sendJson(req, 403, makeErrorResponse("sta_only")); return; }
-      String body = readBody(data, len); DynamicJsonDocument doc(8192);
+      DynamicJsonDocument doc(8192);
       if (deserializeJson(doc, body)) { sendJson(req, 400, makeErrorResponse("invalid_json")); return; }
       OrderRecord order; String err;
       if (!createOrderFromJson(doc, order, err)) { sendJson(req, 400, makeErrorResponse(err.c_str())); return; }
@@ -269,21 +291,19 @@ void setupWeb() {
       evt["event"] = "order_created"; evt["orderId"] = order.orderId; evt["status"] = order.status;
       String out; serializeJson(evt, out); emitEvent(out);
       sendJson(req, 200, makeOkResponse([&](JsonObject data) { data["orderId"] = order.orderId; data["status"] = order.status; }));
-    });
+    }));
 
   server.on("/api/orders/pending", HTTP_POST, [](AsyncWebServerRequest* req) {}, nullptr,
-    [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
-      (void)data; (void)len; (void)index; (void)total;
+    bodyHandler([](AsyncWebServerRequest* req, const String& body) {
       if (!isSTA(req)) { sendJson(req, 403, makeErrorResponse("sta_only")); return; }
       DynamicJsonDocument doc(12288); doc["ok"] = true;
       JsonObject dataObj = doc.createNestedObject("data"); JsonArray arr = dataObj.createNestedArray("orders");
       for (const auto& order : orders) { if (order.status == "pending") { JsonObject o = arr.createNestedObject(); serializeOrder(o, order); } }
       String out; serializeJson(doc, out); sendJson(req, 200, out);
-    });
+    }));
 
   server.on("/api/orders/claim-next-load", HTTP_POST, [](AsyncWebServerRequest* req) {}, nullptr,
-    [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
-      (void)data; (void)len; (void)index; (void)total;
+    bodyHandler([](AsyncWebServerRequest* req, const String& body) {
       if (!isSTA(req)) { sendJson(req, 403, makeErrorResponse("sta_only")); return; }
       OrderRecord* selected = nullptr;
       for (auto& order : orders) { if (order.status == "packed") { selected = &order; break; } }
@@ -296,13 +316,12 @@ void setupWeb() {
       addLog("[ORDER] claim load " + selected->orderId);
       emitOrderUpdate(selected->orderId, selected->status);
       sendOrderWithPackages(req, *selected);
-    });
+    }));
 
   server.on("/api/orders/update", HTTP_POST, [](AsyncWebServerRequest* req) {}, nullptr,
-    [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
-      (void)index; (void)total;
+    bodyHandler([](AsyncWebServerRequest* req, const String& body) {
       if (!isSTA(req)) { sendJson(req, 403, makeErrorResponse("sta_only")); return; }
-      String body = readBody(data, len); DynamicJsonDocument doc(4096);
+      DynamicJsonDocument doc(4096);
       if (deserializeJson(doc, body)) { sendJson(req, 400, makeErrorResponse("invalid_json")); return; }
       String orderId = doc["orderId"] | ""; String status = doc["status"] | "";
       if (orderId.isEmpty() || status.isEmpty()) { sendJson(req, 400, makeErrorResponse("missing_fields")); return; }
@@ -315,13 +334,12 @@ void setupWeb() {
       if (doc.containsKey("meta")) evt["meta"] = doc["meta"].as<JsonVariantConst>();
       String out; serializeJson(evt, out); emitEvent(out);
       sendJson(req, 200, makeOkResponse([&](JsonObject data) { data["orderId"] = orderId; data["status"] = status; }));
-    });
+    }));
 
   server.on("/api/orders/get", HTTP_POST, [](AsyncWebServerRequest* req) {}, nullptr,
-    [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
-      (void)index; (void)total;
+    bodyHandler([](AsyncWebServerRequest* req, const String& body) {
       if (!isSTA(req)) { sendJson(req, 403, makeErrorResponse("sta_only")); return; }
-      String body = readBody(data, len); StaticJsonDocument<256> doc;
+      StaticJsonDocument<256> doc;
       if (deserializeJson(doc, body)) { sendJson(req, 400, makeErrorResponse("invalid_json")); return; }
       String orderId = doc["orderId"] | "";
       if (orderId.isEmpty()) { sendJson(req, 400, makeErrorResponse("missing_orderId")); return; }
@@ -330,13 +348,12 @@ void setupWeb() {
       DynamicJsonDocument outDoc(8192); outDoc["ok"] = true;
       JsonObject dataObj = outDoc.createNestedObject("data"); JsonObject o = dataObj.createNestedObject("order");
       serializeOrder(o, *order); String out; serializeJson(outDoc, out); sendJson(req, 200, out);
-    });
+    }));
 
   server.on("/api/package/register", HTTP_POST, [](AsyncWebServerRequest* req) {}, nullptr,
-    [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
-      (void)index; (void)total;
+    bodyHandler([](AsyncWebServerRequest* req, const String& body) {
       if (!isSTA(req)) { sendJson(req, 403, makeErrorResponse("sta_only")); return; }
-      String body = readBody(data, len); DynamicJsonDocument doc(8192);
+      DynamicJsonDocument doc(8192);
       if (deserializeJson(doc, body)) { sendJson(req, 400, makeErrorResponse("invalid_json")); return; }
       PackageRecord pkg; bool existed = false; String err;
       if (!registerPackageFromJson(doc, pkg, existed, err)) { sendJson(req, 400, makeErrorResponse(err.c_str())); return; }
@@ -346,13 +363,12 @@ void setupWeb() {
       evt["event"] = "package_registered"; evt["packageId"] = pkg.packageId; evt["orderId"] = pkg.orderId; evt["status"] = pkg.status;
       String out; serializeJson(evt, out); emitEvent(out);
       sendJson(req, 200, makeOkResponse([&](JsonObject data) { data["packageId"] = pkg.packageId; data["orderId"] = pkg.orderId; data["status"] = pkg.status; }));
-    });
+    }));
 
   server.on("/api/package/event", HTTP_POST, [](AsyncWebServerRequest* req) {}, nullptr,
-    [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
-      (void)index; (void)total;
+    bodyHandler([](AsyncWebServerRequest* req, const String& body) {
       if (!isSTA(req)) { sendJson(req, 403, makeErrorResponse("sta_only")); return; }
-      String body = readBody(data, len); DynamicJsonDocument doc(2048);
+      DynamicJsonDocument doc(2048);
       if (deserializeJson(doc, body)) { sendJson(req, 400, makeErrorResponse("invalid_json")); return; }
       String packageId = doc["packageId"] | ""; String nodeId = doc["nodeId"] | ""; String eventName = doc["event"] | "pass";
       if (packageId.isEmpty() || nodeId.isEmpty()) { sendJson(req, 400, makeErrorResponse("missing_fields")); return; }
@@ -373,13 +389,12 @@ void setupWeb() {
         data["timeLabel"] = pkg->lastSeenLabel; data["timeIso"] = pkg->lastSeenIso;
         data["timeSynced"] = !pkg->lastSeenIso.isEmpty();
       }));
-    });
+    }));
 
   server.on("/api/package/loaded", HTTP_POST, [](AsyncWebServerRequest* req) {}, nullptr,
-    [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
-      (void)index; (void)total;
+    bodyHandler([](AsyncWebServerRequest* req, const String& body) {
       if (!isSTA(req)) { sendJson(req, 403, makeErrorResponse("sta_only")); return; }
-      String body = readBody(data, len); DynamicJsonDocument doc(2048);
+      DynamicJsonDocument doc(2048);
       if (deserializeJson(doc, body)) { sendJson(req, 400, makeErrorResponse("invalid_json")); return; }
       String orderId = doc["orderId"] | ""; String packageId = doc["packageId"] | ""; String loaderName = doc["loaderName"] | "Factory Loader";
       if (orderId.isEmpty() || packageId.isEmpty()) { sendJson(req, 400, makeErrorResponse("missing_fields")); return; }
@@ -401,13 +416,12 @@ void setupWeb() {
         data["loaded"] = loadedPkgs; data["expected"] = totalPkgs; data["complete"] = complete;
         data["timeLabel"] = pkg->lastSeenLabel; data["timeIso"] = pkg->lastSeenIso;
       }));
-    });
+    }));
 
   server.on("/api/orders/load-complete", HTTP_POST, [](AsyncWebServerRequest* req) {}, nullptr,
-    [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
-      (void)index; (void)total;
+    bodyHandler([](AsyncWebServerRequest* req, const String& body) {
       if (!isSTA(req)) { sendJson(req, 403, makeErrorResponse("sta_only")); return; }
-      String body = readBody(data, len); StaticJsonDocument<512> doc;
+      StaticJsonDocument<512> doc;
       if (deserializeJson(doc, body)) { sendJson(req, 400, makeErrorResponse("invalid_json")); return; }
       String orderId = doc["orderId"] | "";
       if (orderId.isEmpty()) { sendJson(req, 400, makeErrorResponse("missing_orderId")); return; }
@@ -428,13 +442,12 @@ void setupWeb() {
         data["orderId"] = orderId; data["status"] = "loaded"; data["complete"] = true;
         data["loaded"] = loadedPkgs; data["expected"] = totalPkgs;
       }));
-    });
+    }));
 
   server.on("/api/package/get", HTTP_POST, [](AsyncWebServerRequest* req) {}, nullptr,
-    [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
-      (void)index; (void)total;
+    bodyHandler([](AsyncWebServerRequest* req, const String& body) {
       if (!isSTA(req)) { sendJson(req, 403, makeErrorResponse("sta_only")); return; }
-      String body = readBody(data, len); StaticJsonDocument<256> doc;
+      StaticJsonDocument<256> doc;
       if (deserializeJson(doc, body)) { sendJson(req, 400, makeErrorResponse("invalid_json")); return; }
       String packageId = doc["packageId"] | "";
       if (packageId.isEmpty()) { sendJson(req, 400, makeErrorResponse("missing_packageId")); return; }
@@ -443,28 +456,25 @@ void setupWeb() {
       DynamicJsonDocument outDoc(12288); outDoc["ok"] = true;
       JsonObject dataObj = outDoc.createNestedObject("data"); JsonObject p = dataObj.createNestedObject("package");
       serializePackage(p, *pkg); String out; serializeJson(outDoc, out); sendJson(req, 200, out);
-    });
+    }));
 
   server.on("/api/packages/by-order", HTTP_POST, [](AsyncWebServerRequest* req) {}, nullptr,
-    [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
-      (void)index; (void)total;
+    bodyHandler([](AsyncWebServerRequest* req, const String& body) {
       if (!isSTA(req)) { sendJson(req, 403, makeErrorResponse("sta_only")); return; }
-      String body = readBody(data, len); StaticJsonDocument<256> doc;
+      StaticJsonDocument<256> doc;
       if (deserializeJson(doc, body)) { sendJson(req, 400, makeErrorResponse("invalid_json")); return; }
       String orderId = doc["orderId"] | "";
       if (orderId.isEmpty()) { sendJson(req, 400, makeErrorResponse("missing_orderId")); return; }
       DynamicJsonDocument outDoc(24576); outDoc["ok"] = true;
       JsonObject dataObj = outDoc.createNestedObject("data"); JsonArray arr = dataObj.createNestedArray("packages");
       serializePackagesForOrder(arr, orderId); String out; serializeJson(outDoc, out); sendJson(req, 200, out);
-    });
+    }));
 
   // ===== AUTH =====
 
   server.on("/api/auth/register", HTTP_POST, [](AsyncWebServerRequest* req) {}, nullptr,
-    [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
-      (void)index; (void)total;
-      String body = readBody(data, len);
-      DynamicJsonDocument doc(1024);
+    bodyHandler([](AsyncWebServerRequest* req, const String& body) {
+            DynamicJsonDocument doc(1024);
       if (deserializeJson(doc, body)) { sendJson(req, 400, makeErrorResponse("invalid_json")); return; }
       UserRecord user;
       String err;
@@ -479,13 +489,11 @@ void setupWeb() {
         d["displayName"]  = user.displayName;
         d["sessionToken"] = user.sessionToken;
       }));
-    });
+    }));
 
   server.on("/api/auth/login", HTTP_POST, [](AsyncWebServerRequest* req) {}, nullptr,
-    [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
-      (void)index; (void)total;
-      String body = readBody(data, len);
-      DynamicJsonDocument doc(512);
+    bodyHandler([](AsyncWebServerRequest* req, const String& body) {
+            DynamicJsonDocument doc(512);
       if (deserializeJson(doc, body)) { sendJson(req, 400, makeErrorResponse("invalid_json")); return; }
       UserRecord* user = nullptr;
       String err;
@@ -499,13 +507,11 @@ void setupWeb() {
         d["displayName"]  = user->displayName;
         d["sessionToken"] = user->sessionToken;
       }));
-    });
+    }));
 
   server.on("/api/auth/verify", HTTP_POST, [](AsyncWebServerRequest* req) {}, nullptr,
-    [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
-      (void)index; (void)total;
-      String body = readBody(data, len);
-      StaticJsonDocument<256> doc;
+    bodyHandler([](AsyncWebServerRequest* req, const String& body) {
+            StaticJsonDocument<256> doc;
       if (deserializeJson(doc, body)) { sendJson(req, 400, makeErrorResponse("invalid_json")); return; }
       String token = doc["token"] | "";
       if (token.isEmpty()) { sendJson(req, 400, makeErrorResponse("missing_token")); return; }
@@ -515,13 +521,11 @@ void setupWeb() {
       sendJson(req, 200, makeOkResponse([&](JsonObject d) {
         serializeUser(d, *user, false);
       }));
-    });
+    }));
 
   server.on("/api/auth/logout", HTTP_POST, [](AsyncWebServerRequest* req) {}, nullptr,
-    [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
-      (void)index; (void)total;
-      String body = readBody(data, len);
-      StaticJsonDocument<256> doc;
+    bodyHandler([](AsyncWebServerRequest* req, const String& body) {
+            StaticJsonDocument<256> doc;
       if (deserializeJson(doc, body)) { sendJson(req, 400, makeErrorResponse("invalid_json")); return; }
       String token = doc["token"] | "";
       UserRecord* user = nullptr;
@@ -531,9 +535,10 @@ void setupWeb() {
         addLog("[AUTH] logout: " + user->username);
       }
       sendJson(req, 200, makeOkResponse([](JsonObject d) { d["ok"] = true; }));
-    });
+    }));
 
   server.on("/api/users/list", HTTP_GET, [](AsyncWebServerRequest* req) {
+    DataLock lock;
     if (!isSTA(req)) { sendJson(req, 403, makeErrorResponse("sta_only")); return; }
     DynamicJsonDocument doc(16384);
     doc["ok"] = true;
@@ -550,36 +555,35 @@ void setupWeb() {
   // ===== PLAYERS =====
 
   server.on("/api/players/online", HTTP_GET, [](AsyncWebServerRequest* req) {
+    DataLock lock;
     sendJson(req, 200, playersOnline);
   });
 
   server.on("/api/players/online", HTTP_POST, [](AsyncWebServerRequest* req) {}, nullptr,
-    [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
-      (void)index; (void)total;
+    bodyHandler([](AsyncWebServerRequest* req, const String& body) {
       if (!isSTA(req)) { sendJson(req, 403, makeErrorResponse("sta_only")); return; }
-      playersOnline = readBody(data, len);
+      DynamicJsonDocument chk(4096);
+      if (deserializeJson(chk, body) || !chk.is<JsonArray>()) { sendJson(req, 400, makeErrorResponse("invalid_players")); return; }
+      String list; serializeJson(chk, list);
+      playersOnline = list;
       addLog("[PLAYERS] updated");
 
-      // Broadcast to remote clients via MQTT
-      StaticJsonDocument<64> evt;
-      evt["event"] = "players_online_updated";
-      String out; serializeJson(evt, out);
-      mqttBroadcast(out);
+      // Verejne: remote cekal {"event":"players_online","players":[...]}
+      mqttBroadcastPublic("{\"event\":\"players_online\",\"players\":" + list + "}");
 
       sendJson(req, 200, makeOkResponse([](JsonObject d) { d["updated"] = true; }));
-    });
+    }));
 
   // ===== MQTT COMMAND HANDLERS =====
   // These handle commands coming from remote clients via MQTT (axis/cmd topic)
   // They are also reachable via REST for internal use
 
   server.on("/api/mqtt/get_me", HTTP_POST, [](AsyncWebServerRequest* req) {}, nullptr,
-    [](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
-      (void)index; (void)total;
+    bodyHandler([](AsyncWebServerRequest* req, const String& body) {
       if (!isSTA(req)) { sendJson(req, 403, makeErrorResponse("sta_only")); return; }
-      mqttBroadcast(meStorage);
+      mqttBroadcastPublic(meStorage);
       sendJson(req, 200, makeOkResponse([](JsonObject d) { d["broadcast"] = true; }));
-    });
+    }));
 
   server.onNotFound([](AsyncWebServerRequest* req) { sendJson(req, 404, makeErrorResponse("not_found")); });
 

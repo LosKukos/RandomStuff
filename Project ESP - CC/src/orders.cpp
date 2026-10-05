@@ -21,6 +21,7 @@ void serializeOrder(JsonObject o, const OrderRecord& order) {
   o["destination"] = order.destination;
   o["deliveryMode"] = order.deliveryMode;
   o["recipient"] = order.recipient;
+  o["ownerId"] = order.ownerId;
   o["created"] = order.created;
   o["updated"] = order.updated;
   JsonArray arr = o.createNestedArray("items");
@@ -54,4 +55,17 @@ bool createOrderFromJson(JsonDocument& doc, OrderRecord& outOrder, String& err) 
     outOrder.items.push_back(item);
   }
   return true;
+}
+
+bool userOwnsOrder(const OrderRecord& order, const UserRecord& user) {
+  if (!order.ownerId.isEmpty()) return order.ownerId == user.userId;
+  return order.recipient == user.mcName || order.recipient == user.username;
+}
+
+bool userOwnsPackage(const PackageRecord& pkg, const UserRecord& user) {
+  if (!pkg.orderId.isEmpty()) {
+    OrderRecord* order = findOrderById(pkg.orderId);
+    if (order) return userOwnsOrder(*order, user);
+  }
+  return pkg.recipient == user.mcName || pkg.recipient == user.username;
 }

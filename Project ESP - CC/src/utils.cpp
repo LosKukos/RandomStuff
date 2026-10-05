@@ -1,14 +1,21 @@
 #include "utils.h"
 #include "app_state.h"
+#include "sync.h"
 #include <Arduino.h>
 #include <WiFi.h>
 
 void addLog(const String& msg) {
   Serial.println(msg);
+  LogLock lock;
   logs.push_back(msg);
   if (logs.size() > 100) {
     logs.erase(logs.begin());
   }
+}
+
+std::vector<String> getLogsCopy() {
+  LogLock lock;
+  return logs;
 }
 
 String genId() {

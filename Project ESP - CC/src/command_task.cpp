@@ -3,6 +3,7 @@
 #include "utils.h"
 #include "persistence.h"
 #include "mqtt_bridge.h"
+#include "sync.h"
 #include <algorithm>
 
 void commandTask(void* pvParameters) {
@@ -17,66 +18,71 @@ void commandTask(void* pvParameters) {
 
   for (;;) {
     uint32_t now = millis();
+    {
+      DataLock lock;  // jen kratke sekce; mqttLoop() bezi MIMO zamek
 
-    for (auto& cmd : commandQueue) {
-      if (cmd.status == "queued") {
-        cmd.status = "sent";
-        cmd.updated = now;
-        queueDirty = true;
+      for (auto& cmd : commandQueue) {
+        if (cmd.status == "queued") {
+          cmd.status = "sent";
+          cmd.updated = now;
+          queueDirty = true;
+        }
+
+        if (cmd.status == "sent" && (now - cmd.updated > 10000)) {
+          cmd.status = "timeout";
+          cmd.updated = now;
+          queueDirty = true;
+          addLog("[CMD] timeout " + cmd.id);
+        }
       }
 
-      if (cmd.status == "sent" && (now - cmd.updated > 10000)) {
-        cmd.status = "timeout";
-        cmd.updated = now;
-        queueDirty = true;
-        addLog("[CMD] timeout " + cmd.id);
+      commandQueue.erase(
+        std::remove_if(commandQueue.begin(), commandQueue.end(),
+          [now](const Command& cmd) {
+            bool finished = (
+              cmd.status == "done" ||
+              cmd.status == "failed" ||
+              cmd.status == "partial" ||
+              cmd.status == "timeout"
+            );
+            return finished && (now - cmd.updated > 60000);
+          }),
+        commandQueue.end()
+      );
+
+      if (queueDirty && (now - lastQueueSave > 2000)) {
+        saveQueue();
+        lastQueueSave = now;
       }
+
+      if (meDirty && (now - lastMeSave > 5000)) {
+        saveME();
+        lastMeSave = now;
+      }
+
+      if (ordersDirty && (now - lastOrdersSave > 2000)) {
+        saveOrders();
+        lastOrdersSave = now;
+      }
+
+      if (packagesDirty && (now - lastPackagesSave > 2000)) {
+        savePackages();
+        lastPackagesSave = now;
+      }
+
+      if (nodesDirty && (now - lastNodesSave > 2000)) {
+        saveNodes();
+        lastNodesSave = now;
+      }
+
+      if (usersDirty && (now - lastUsersSave > 2000)) {
+        saveUsers();
+        lastUsersSave = now;
+      }
+
     }
 
-    commandQueue.erase(
-      std::remove_if(commandQueue.begin(), commandQueue.end(),
-        [now](const Command& cmd) {
-          bool finished = (
-            cmd.status == "done" ||
-            cmd.status == "failed" ||
-            cmd.status == "partial" ||
-            cmd.status == "timeout"
-          );
-          return finished && (now - cmd.updated > 60000);
-        }),
-      commandQueue.end()
-    );
-
-    if (queueDirty && (now - lastQueueSave > 2000)) {
-      saveQueue();
-      lastQueueSave = now;
-    }
-
-    if (meDirty && (now - lastMeSave > 5000)) {
-      saveME();
-      lastMeSave = now;
-    }
-
-    if (ordersDirty && (now - lastOrdersSave > 2000)) {
-      saveOrders();
-      lastOrdersSave = now;
-    }
-
-    if (packagesDirty && (now - lastPackagesSave > 2000)) {
-      savePackages();
-      lastPackagesSave = now;
-    }
-
-    if (nodesDirty && (now - lastNodesSave > 2000)) {
-      saveNodes();
-      lastNodesSave = now;
-    }
-
-    if (usersDirty && (now - lastUsersSave > 2000)) {
-      saveUsers();
-      lastUsersSave = now;
-    }
-
+    // MQTT sit (muze blokovat pri reconnectu) - zamek tu nedrzime.
     mqttLoop();
 
     vTaskDelay(pdMS_TO_TICKS(200));

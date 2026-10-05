@@ -7,10 +7,6 @@ local CFG = require("config")
 local M = {}
 
 local lastPlayersJson = nil
-local lastSentAt = nil
--- ESP drzi seznam hracu jen v RAM. Kdyby se seznam nemenil, po restartu ESP by zustal
--- prazdny, proto ho posilame znovu aspon jednou za RESEND_EVERY sekund.
-local RESEND_EVERY = 300
 
 local function getPlayers()
   -- Try native CC players() first (works on some server setups)
@@ -39,9 +35,8 @@ function M.sync()
   end
 
   local json = textutils.serialiseJSON(list)
-  local now = os.clock()
 
-  if json == lastPlayersJson and lastSentAt and (now - lastSentAt) < RESEND_EVERY then
+  if json == lastPlayersJson then
     return true, "no_change"
   end
 
@@ -54,7 +49,6 @@ function M.sync()
 
   res.close()
   lastPlayersJson = json
-  lastSentAt = now
   return true, "synced"
 end
 

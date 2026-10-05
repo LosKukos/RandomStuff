@@ -1,177 +1,86 @@
-# Project ESP - CC · AXIS
+# AXIS patch – stabilita firmwaru (kroky 2 + 3)
 
-Logistics control system for Minecraft (ComputerCraft + Create + AE2) bridged through an ESP32.
+Složka kopíruje strukturu repa `Project ESP - CC/`. Stačí soubory přepsat (nový je jen `sync.h/.cpp`).
 
----
+## Co kam
 
-## Architecture
-
-```
-MC (ComputerCraft)
-  ├── master       — AE2 export + Create packager pipeline
-  ├── node         — package checkpoint scanner
-  └── loader_gate  — train loader gate
-
-        │  HTTP / WebSocket
-        ▼
-
-ESP32 (AXIS controller)
-  ├── REST API     — orders, packages, nodes, commands
-  ├── WebSocket    — real-time events to local dashboard
-  ├── LittleFS     — persistent storage
-  └── AP mode      — WiFi setup interface
-
-        │  browser
-        ▼
-
-Local dashboard (index.html served by ESP)
-```
-
----
-
-## ESP32 Firmware
-
-Built with PlatformIO + Arduino framework.
-
-### Dependencies
-
-```ini
-lib_deps =
-  bblanchon/ArduinoJson
-  esp32async/ESPAsyncWebServer
-  esp32async/AsyncTCP
-```
-
-### First setup
-
-1. Flash firmware via PlatformIO.
-2. Upload `data/` folder via LittleFS upload tool.
-3. Connect to WiFi AP `AP client` (password `1234567890`).
-4. Open `http://192.168.4.1` and set your WiFi credentials.
-5. ESP will connect to your network and be reachable at its local IP.
-
-### Source structure
-
-```
-src/
-  main.cpp          — boot, task init
-  app_state.h/cpp   — shared state, structs
-  web.h/cpp         — REST API + WebSocket routes
-  wifi_task.h/cpp   — WiFi STA + AP management
-  command_task.h/cpp — command queue + LittleFS flush
-  commands.h/cpp    — command push + WS emit
-  orders.h/cpp      — order CRUD
-  packages.h/cpp    — package CRUD + history
-  nodes.h/cpp       — node registration + heartbeat
-  persistence.h/cpp — LittleFS load/save
-  time_service.h/cpp — NTP, Europe/Prague timezone
-  utils.h/cpp       — helpers
-```
-
----
-
-## ComputerCraft
-
-### Install
-
-Download `install.lua` to a CC computer with HTTP enabled and run:
-
-```lua
-install
-```
-
-Installs either `master` or `node` package from GitHub into `axis/master/` or `axis/node/`.
-
-### Packages
-
-**master** — runs on the factory CC computer. Polls ESP for pending orders, exports items from AE2, feeds Create packager, registers packages back to ESP.
-
-**node** — dumb checkpoint scanner. Detects Create packages passing through a depot and reports them to ESP.
-
-**loader_gate** — train loader gate. Claims next packed order from ESP, accepts/rejects packages on a sorting belt, confirms load to ESP, then releases the train.
-
-### CC source structure
-
-```
-CC/
-  installer/   — install.lua
-  master/      — config.lua, master.lua, esp.lua, me.lua, factory.lua, orders.lua, util.lua
-  node/        — config.lua, node.lua, esp.lua, scanner.lua, util.lua
-  loader/      — loader_gate.lua
-```
-
----
-
-## ESP API
-
-All endpoints are STA-only (local network) except `/api/config` and `/api/debug` which are AP-only.
-
-### Orders
-
-| Method | Path | Description |
+| Soubor | Stav | Co se změnilo |
 |---|---|---|
-| POST | `/api/orders/create` | Create new order |
-| POST | `/api/orders/pending` | List pending orders |
-| POST | `/api/orders/get` | Get single order |
-| POST | `/api/orders/update` | Update order status |
-| POST | `/api/orders/claim-next-load` | Claim next packed order for loading |
-| POST | `/api/orders/load-complete` | Confirm all packages loaded |
+| `src/sync.h`, `src/sync.cpp` | **NOVÝ** | Zámky: `DataLock` (sdílená data) a `LogLock` (logy) |
+| `src/web.cpp` | přepsat | POST těla se skládají z chunků (`bodyHandler`), POST i GET handlery běží pod `DataLock` |
+| `src/mqtt_bridge.cpp` | přepsat | Odchozí MQTT přes frontu; **odpovědi jen soukromě**, whitelist příkazů, `create_order` přes MQTT, sanitizovaný broadcast |
+| `src/command_task.cpp` | přepsat | Zámek jen kolem fronty a ukládání, `mqttLoop()` běží mimo zámek |
+| `src/utils.h`, `src/utils.cpp` | přepsat | `addLog` pod `LogLock`, nová `getLogsCopy()` |
+| `src/main.cpp` | přepsat | Na začátku `initSync()` |
+| `src/app_state.h`, `src/orders.h`, `src/orders.cpp` | přepsat | Objednávka má `ownerId`; funkce `userOwnsOrder/Package` (vlastník = `ownerId`, jinak shoda `recipient` s mcName/username) |
+| `src/mqtt_bridge.h` | přepsat | Nové `mqttBroadcastPublic()` |
+| `src/secrets.h` | **NOVÝ** (nekomitovat!) | MQTT host/port/uživatel/heslo pro EMQX. Testovací údaje jsou vyplněné, před ostrým provozem změnit |
+| `src/secrets.example.h` | **NOVÝ** | Šablona bez hesel (tu komitovat) |
+| `gitignore.txt` | obsah přidat do `.gitignore` | Řádek `src/secrets.h` (zbytek souboru je stejný) |
+| `data/remote.html` | přepsat + nahrát na GitHub Pages | Soukromý topic `axis/res/<clientId>`, hráči pro registraci bez tokenu, bez klientského filtru, hlášení výsledku `create_order` |
+| `src/persistence.cpp` | přepsat | `queue.json` dokumenty na heap (ne na stack) |
+| `platformio.ini` | přepsat | `ArduinoJson@^6.21.5` |
+| `data/index.html.gz`, `data/config.html.gz`, `data/css/demo.css.gz` | přepsat | Znovu vygenerované ze zdrojových HTML/CSS (staré `.gz` se od nich lišily, takže ESP mohl servírovat starý dashboard) |
 
-### Packages
+## Co jsem ověřil (a co ne)
 
-| Method | Path | Description |
-|---|---|---|
-| POST | `/api/package/register` | Register new package |
-| POST | `/api/package/event` | Report node scan event |
-| POST | `/api/package/loaded` | Confirm package physically loaded to train |
-| POST | `/api/package/get` | Get single package |
-| POST | `/api/packages/by-order` | List packages for order |
+- Všech 15 `.cpp` souborů prošlo `g++ -fsyntax-only` proti reálným hlavičkám ArduinoJson 6.21.5 a PubSubClient a proti zjednodušeným stubům ESP/Arduino/webserveru. Podpisy `ArBodyHandlerFunction`, `_tempObject`, `textAll(String)` a `beginPublish/write` jsem ověřil přímo ve zdrojích knihoven.
+- **Neověřeno:** skutečný build pro ESP32 (toolchain odsud stáhnout nejde) a chování na hardwaru. Proto je níže test po flashi.
 
-### Nodes
+## Flash (pořadí)
 
-| Method | Path | Description |
-|---|---|---|
-| POST | `/api/node/register` | Register or re-register node |
-| POST | `/api/node/heartbeat` | Node heartbeat |
-| GET  | `/api/nodes/list` | List all nodes |
+1. `pio run` – musí projít.
+2. `pio run -t uploadfs` – nahraje celou složku `data/`. **Pozor:** přepíše i `config.json` a `*.json` na ESP, takže po něm bude potřeba znovu nastavit WiFi přes AP (`AXIS` hotspot) a objednávky/balíky začnou prázdné. Pro test to je v pořádku.
+3. `pio run -t upload` – nahraje firmware.
+4. `pio device monitor` – sleduj log při bootu.
 
-### Commands
+## Přechod na EMQX (HiveMQ Serverless končí 31. 12. 2026)
 
-| Method | Path | Description |
-|---|---|---|
-| POST | `/api/command` | Queue command (e.g. craft) |
-| POST | `/api/ack` | Acknowledge command |
-| POST | `/api/result` | Post command result |
+- Broker: EMQX Cloud Serverless, ESP jde na port 8883 (TLS), web na `wss://…:8084/mqtt`. Adresa a testovací účet jsou už v `secrets.h` a `remote.html`.
+- Topicy se nezakládají, vzniknou při prvním použití. Zbývá jen volitelné ACL.
+- Test: po flashi `/api/logs` ukáže `[MQTT] connected to broker`; na webu se rozsvítí tečka připojení a jde Register/Login.
+- Ostrý provoz: dva účty v EMQX (`esp`, `web`) s ACL (viz tabulka v konverzaci), nová hesla do `secrets.h` a `remote.html`.
 
-### System
+## Oprávnění (krok 2)
 
-| Method | Path | Description |
-|---|---|---|
-| GET | `/api/status` | System status (STA) |
-| GET | `/api/debug` | Debug info (AP) |
-| GET | `/api/logs` | Log buffer (AP) |
-| POST | `/api/config` | Save WiFi config (AP) |
-| POST | `/api/me/list` | Push ME storage snapshot |
-| GET  | `/api/me/list` | Get ME storage snapshot |
+- **Lokální admin panel (STA IP):** vidí všechno jako dřív (REST + WebSocket, plné události).
+- **Remote (GitHub Pages přes MQTT):** na `axis/broadcast` jdou jen signály `{"event":"order_updated"}` bez dat, ME snapshot a seznam hráčů. Objednávky a balíky dostane uživatel jen jako soukromou odpověď na `axis/res/<clientId>`, vždy filtrované podle uživatele z tokenu (`userId` poslaný klientem se ignoruje).
+- **Whitelist `axis/cmd`:** `get_me`, `get_orders_by_user`, `get_packages_by_user`, `create_order`. Cokoli jiného se odmítne a do fronty příkazů pro CC se z internetu nedostane nic.
+- **`create_order` přes MQTT:** `recipient` a `ownerId` určuje server z tokenu. Limity: 30 položek, 10000 ks na položku, max 10 otevřených objednávek na uživatele.
+- **Seznam hráčů pro registraci:** akce `players` na `axis/auth` (bez tokenu). ESP navíc při změně posílá `players_online` na broadcast.
+- Nový formát v `orders.json` (`ownerId`) je zpětně kompatibilní; staré objednávky se přiřazují přes `recipient`.
 
----
+**Omezení do ostrého provozu:** webový klient i ESP mají zatím stejný MQTT účet, takže soukromí odpovědí stojí na tom, že `clientId` nikdo nezná. Skutečnou izolaci dá až oddělený účet s ACL (už v seznamu před produkcí).
 
-## Local Dashboard
+## Jak to teď funguje (3 pravidla)
 
-Served by ESP at `http://<esp-ip>/` on STA interface.
+1. Kdo sahá na `orders / packages / nodes / users / commandQueue / meStorage / playersOnline`, drží `DataLock`.
+   V handlerech to děláš automaticky – `bodyHandler` už zámek bere za tebe. Nový GET handler: přidej `DataLock lock;` na první řádek.
+2. Do MQTT píšeš jen přes `mqttBroadcast(json)`. Nikdy nevolej `mqtt.publish` mimo `mqtt_bridge.cpp`.
+3. Uvnitř `DataLock` nevolej nic, co čeká na síť (HTTP/TLS). Přesně proto `mqttLoop()` běží mimo něj.
 
-Features:
-- ME storage browser with search
-- Craft command trigger
-- Order basket — build and submit orders
-- Order tracking with route visualization
-- Real-time updates via WebSocket
+## Git (jednorázově, v kořeni repa)
 
----
+```
+git rm --cached "Project ESP - CC/data/config.json" "Project ESP - CC/data/me.json" "Project ESP - CC/data/nodes.json" "Project ESP - CC/data/orders.json" "Project ESP - CC/data/packages.json" "Project ESP - CC/data/queue.json"
+git commit -m "stop tracking runtime data"
+```
+Soubory zůstanou na disku, jen je git přestane sledovat.
 
-## Notes
+## Test po flashi
 
-- LittleFS persists orders, packages, nodes, commands and ME cache across reboots.
-- Runtime files (`config.json`, `me.json`, `orders.json`, etc.) are excluded from Git.
-- NTP syncs to `pool.ntp.org` on WiFi connect, timezone Europe/Prague.
-- CC node IDs are assigned by ESP on first registration and stored locally in `node_state.json` (not committed).
+1. `pio run` projde bez erroru (warningy `unused parameter 'body'` jsou v pořádku).
+2. ESP naběhne, v `/api/logs` (AP) je `[BOOT] starting` a `[MQTT] connected to broker`.
+3. Dashboard načte ME seznam a objednávku jde založit.
+4. Pošli z CC masteru větší `package/register` (více položek) – dřív se rozbil, teď musí projít.
+5. Nechej to běžet 30 min a koukni, jestli ESP neresetuje (`/api/debug` → `uptime` roste, `heap` nekleská).
+
+## Test oprávnění (po flashi + nahrání `remote.html`)
+
+1. Admin panel na STA IP: vidíš všechny objednávky.
+2. GitHub Pages → záložka Register: dropdown hráčů se naplní (potřebuje, aby master posílal seznam hráčů; jinak bude prázdný).
+3. Dva účty A a B: A vytvoří objednávku → A ji vidí, B ne, admin panel ano. Po změně stavu v adminu se A seznam obnoví.
+4. `/api/logs` při pokusu o jiný typ příkazu ukáže `[MQTT] cmd: rejected type`.
+
+## Když build selže
+Pošli mi celý výpis chyby. Nemohl jsem to zkompilovat, takže nejpravděpodobnější místa jsou `bodyHandler` (typ `ArBodyHandlerFunction`) a `mqtt.write` ve `mqtt_bridge.cpp`.
