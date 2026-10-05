@@ -355,6 +355,7 @@ const MQTT_PASS = 'Admin123';
 const TOPIC_OUT  = 'axis/broadcast';
 const TOPIC_CMD  = 'axis/cmd';
 const TOPIC_AUTH = 'axis/auth';
+const TOPIC_RES  = 'axis/res/';   // soukrome odpovedi: axis/res/<clientId>
 
 // ===== STATE =====
 let client        = null;
@@ -443,6 +444,7 @@ function connectMQTT() {
 
     client.subscribe(TOPIC_OUT);
     client.subscribe('axis/auth/res/' + clientId);
+    client.subscribe(TOPIC_RES + clientId);
 
     // Auto-login if token stored
     if (sessionToken && currentUser) {
@@ -474,7 +476,7 @@ function mqttAuth(payload) {
 }
 
 function mqttCmd(type, payload) {
-  mqttPublish(TOPIC_CMD, { type, payload: payload || {}, token: sessionToken });
+  mqttPublish(TOPIC_CMD, { type, payload: payload || {}, token: sessionToken, clientId });
 }
 
 async function verifyStoredToken() {
@@ -616,10 +618,21 @@ function onLoggedIn(user) {
 }
 
 // ===== PLAYERS FOR REGISTER =====
-function loadPlayersForRegister() {
-  // Request current player list via MQTT
-  if (client?.connected) mqttCmd('get_players', {});
-  // Dropdown gets populated when players_online event arrives via wireMessages
+function fillPlayers(players) {
+  const sel = document.getElementById('reg-mcname');
+  if (!sel || !Array.isArray(players)) return;
+  sel.innerHTML = '<option value="">— select your name —</option>';
+  players.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p; opt.textContent = p; sel.appendChild(opt);
+  });
+}
+
+async function loadPlayersForRegister() {
+  // Verejny dotaz (bez tokenu) - ESP odpovi na axis/auth/res/<clientId>
+  if (!client?.connected) return;
+  const res = await mqttAuth({ action: 'players' });
+  if (res && res.ok) fillPlayers(res.players);
 }
 
 // ===== DATA LOADING =====
@@ -812,6 +825,17 @@ function showTracking(orderId) {
 }
 
 // ===== CRAFT RESULT =====
+function handleCmdResult(data) {
+  if (data.type === 'create_order') {
+    if (data.ok) { toast('Order ' + (data.orderId || '') + ' created ✓'); refreshMyOrders(); }
+    else { showPopup('Order failed', 'Server rejected the order: ' + (data.error || 'unknown error'), 'error'); }
+    return;
+  }
+  if (!data.ok && data.error === 'invalid_token') {
+    showPopup('Session expired', 'Please log in again.', 'warn');
+  }
+}
+
 function handleCraftResult(data) {
   if (data.status === 'done') { toast('Craft queued ✓'); }
   else if (data.status === 'partial') { showPopup('Partial', 'Materials missing for full craft.', 'warn'); }
@@ -831,24 +855,17 @@ function wireMessages() {
       return;
     }
 
-    if (topic !== TOPIC_OUT) return;
+    if (topic !== TOPIC_OUT && topic !== TOPIC_RES + clientId) return;
 
     if (data.items && Array.isArray(data.items)) { handleMeUpdate(data.items); return; }
 
     if (data.event === 'players_online' && Array.isArray(data.players)) {
-      const sel = document.getElementById('reg-mcname');
-      if (sel) {
-        sel.innerHTML = '<option value="">— select your name —</option>';
-        data.players.forEach(p => {
-          const opt = document.createElement('option');
-          opt.value = p; opt.textContent = p; sel.appendChild(opt);
-        });
-      }
+      fillPlayers(data.players);
       return;
     }
 
     if (data.event === 'orders_list' && Array.isArray(data.orders)) {
-      myOrders = data.orders.filter(o => !currentUser || o.recipient === currentUser.mcName || o.recipient === currentUser.username);
+      myOrders = data.orders;   // filtruje ESP podle tokenu
       renderOrdersList(); updateOverview(); return;
     }
 
@@ -858,6 +875,7 @@ function wireMessages() {
 
     if (data.event === 'order_created' || data.event === 'order_updated') { refreshMyOrders(); return; }
     if (data.event === 'package_registered' || data.event === 'package_event') { refreshMyPackages(); return; }
+    if (data.event === 'cmd_result') { handleCmdResult(data); return; }
     if (data.event === 'command_result') { handleCraftResult(data); return; }
   });
 }
