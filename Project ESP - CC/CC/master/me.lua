@@ -47,4 +47,21 @@ function M.exportIfEnough(filter)
   return true, { moved = moved }
 end
 
+-- Kompaktni snapshot pro web: jen polozky skladem, nejpocetnejsi prvni, max N kusu.
+function M.snapshot(maxItems)
+  local ok, items = util.safeCall(me.getItems)
+  if not ok or type(items) ~= "table" then return nil, "getItems_failed" end
+  local list = {}
+  for _, item in ipairs(items) do
+    local count = item.amount or item.count or 0
+    if count > 0 and item.name then
+      list[#list + 1] = { name = item.name, displayName = item.displayName or item.name, count = count, hasPattern = item.isCraftable and true or false }
+    end
+  end
+  table.sort(list, function(a, b) return a.count > b.count end)
+  local limit = maxItems or 300
+  while #list > limit do list[#list] = nil end
+  return list
+end
+
 return M

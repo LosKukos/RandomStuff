@@ -12,6 +12,17 @@ local lastSentAt = nil
 -- prazdny, proto ho posilame znovu aspon jednou za RESEND_EVERY sekund.
 local RESEND_EVERY = 300
 
+local detector = nil
+
+local function getDetector()
+  if detector then return detector end
+  if CFG.playerDetector and CFG.playerDetector ~= "" then
+    detector = peripheral.wrap(CFG.playerDetector)
+  end
+  if not detector then detector = peripheral.find("playerDetector") end
+  return detector
+end
+
 local function getPlayers()
   -- Try native CC players() first (works on some server setups)
   if type(players) == "function" then
@@ -19,12 +30,13 @@ local function getPlayers()
     if ok and type(list) == "table" then return list end
   end
 
-  -- Fallback: try peripheral (AdvPeripherals playerDetector or similar)
-  -- Adjust peripheral name to match your setup
-  local detector = peripheral.find("playerDetector")
-  if detector and detector.getOnlinePlayers then
-    local ok, list = pcall(detector.getOnlinePlayers)
+  -- Advanced Peripherals Player Detector: nazev z config.lua (CFG.playerDetector),
+  -- kdyz neexistuje, zkusime najit jakykoli "playerDetector" v siti.
+  local det = getDetector()
+  if det and det.getOnlinePlayers then
+    local ok, list = pcall(det.getOnlinePlayers)
     if ok and type(list) == "table" then return list end
+    detector = nil  -- odpojeny/rozbity - priste znovu najit
   end
 
   -- Nothing available yet
@@ -35,7 +47,7 @@ function M.sync()
   local list = getPlayers()
 
   if not list then
-    return false, "no_player_source"
+    return false, "no_player_detector (CFG.playerDetector=" .. tostring(CFG.playerDetector) .. ")"
   end
 
   local json = textutils.serialiseJSON(list)

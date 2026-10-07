@@ -6,6 +6,7 @@ local CFG = {
   depot = "create:depot_2",
   bridgeChestDirection = "right",
   armSetRedstoneSide = "back",
+  playerDetector = "player_detector_0",   -- Advanced Peripherals Player Detector (nazev periferie)
 
   -- esp
   espBase = "http://10.0.1.17",
@@ -18,6 +19,10 @@ local CFG = {
   setPulse = 0.15,
   poll = 0.1,
   idleSleep = 3,
+
+  -- ME snapshot pro web (katalog polozek)
+  meSnapshotInterval = 30,   -- s
+  meSnapshotMax = 300,       -- max poloznek (nejpocetnejsi prvni), kvuli RAM na ESP
 }
 
 return CFG

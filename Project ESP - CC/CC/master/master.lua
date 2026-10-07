@@ -11,6 +11,7 @@ local players = require("players")
 
 local playerSyncInterval = 15  -- seconds
 local lastPlayerSync = 0
+local lastMeSync = -1000000   -- hned pri startu
 
 local function processOrder(order)
   util.printHeader("PROCESS ORDER " .. tostring(order.orderId))
@@ -84,6 +85,19 @@ local function main()
         print("[PLAYERS] sync failed: " .. tostring(syncMsg))
       end
       lastPlayerSync = now
+    end
+
+    -- ME snapshot (katalog polozek pro web)
+    if now - lastMeSync >= (CFG.meSnapshotInterval or 30) then
+      local list, snapErr = me.snapshot(CFG.meSnapshotMax)
+      if not list then
+        print("[ME] snapshot failed: " .. tostring(snapErr))
+      else
+        local pushOk, pushErr = esp.pushMe(list)
+        if pushOk then print("[ME] snapshot sent: " .. #list .. " items")
+        else print("[ME] push to ESP failed: " .. tostring(pushErr)) end
+      end
+      lastMeSync = now
     end
   end
 end

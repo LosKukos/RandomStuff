@@ -16,6 +16,7 @@ function M.getPendingOrders() return postJson("/api/orders/pending", {}) end
 function M.updateOrder(orderId, status, meta)
   return postJson("/api/orders/update", { orderId = orderId, status = status, meta = meta or {} })
 end
+function M.pushMe(items) return postJson("/api/me/list", { items = items }) end
 function M.registerPackage(pkg) return postJson("/api/package/register", pkg) end
 
 return M
