@@ -18,3 +18,8 @@ install
 ```
 
 HTTP must be enabled in ComputerCraft.
+
+## Command
+```
+wget https://raw.githubusercontent.com/LosKukos/RandomStuff/refs/heads/main/Project%20ESP%20-%20CC/CC/installer/install.lua
+```
