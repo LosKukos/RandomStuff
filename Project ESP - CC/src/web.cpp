@@ -225,6 +225,7 @@ void setupWeb() {
   server.on("/api/me/list", HTTP_POST, [](AsyncWebServerRequest* req) {}, nullptr,
     bodyHandler([](AsyncWebServerRequest* req, const String& body) {
       if (!isSTA(req)) { sendJson(req, 403, makeErrorResponse("sta_only")); return; }
+      if (body.length() > 60000 || body.indexOf("\"items\"") < 0) { sendJson(req, 400, makeErrorResponse("invalid_me_snapshot")); return; }
       meStorage = body; meLastUpdate = millis(); meDirty = true;
       addLog("[ME] storage updated");
       sendJson(req, 200, makeOkResponse([](JsonObject data) { data["updated"] = true; }));
@@ -302,6 +303,26 @@ void setupWeb() {
       String out; serializeJson(doc, out); sendJson(req, 200, out);
     }));
 
+  server.on("/api/orders/list", HTTP_GET, [](AsyncWebServerRequest* req) {
+    DataLock lock;
+    if (!isSTA(req)) { sendJson(req, 403, makeErrorResponse("sta_only")); return; }
+    DynamicJsonDocument doc(24576); doc["ok"] = true;
+    JsonObject dataObj = doc.createNestedObject("data"); JsonArray arr = dataObj.createNestedArray("orders");
+    for (const auto& order : orders) { JsonObject o = arr.createNestedObject(); serializeOrder(o, order); }
+    if (doc.overflowed()) { sendJson(req, 507, makeErrorResponse("too_large")); return; }
+    String out; serializeJson(doc, out); sendJson(req, 200, out);
+  });
+
+  server.on("/api/packages/list", HTTP_GET, [](AsyncWebServerRequest* req) {
+    DataLock lock;
+    if (!isSTA(req)) { sendJson(req, 403, makeErrorResponse("sta_only")); return; }
+    DynamicJsonDocument doc(32768); doc["ok"] = true;
+    JsonObject dataObj = doc.createNestedObject("data"); JsonArray arr = dataObj.createNestedArray("packages");
+    for (const auto& pkg : packages) { JsonObject p = arr.createNestedObject(); serializePackage(p, pkg); }
+    if (doc.overflowed()) { sendJson(req, 507, makeErrorResponse("too_large")); return; }
+    String out; serializeJson(doc, out); sendJson(req, 200, out);
+  });
+
   server.on("/api/orders/claim-next-load", HTTP_POST, [](AsyncWebServerRequest* req) {}, nullptr,
     bodyHandler([](AsyncWebServerRequest* req, const String& body) {
       if (!isSTA(req)) { sendJson(req, 403, makeErrorResponse("sta_only")); return; }
@@ -312,7 +333,7 @@ void setupWeb() {
         JsonObject dataObj = outDoc.createNestedObject("data"); dataObj["order"] = nullptr; dataObj.createNestedArray("packages");
         String out; serializeJson(outDoc, out); sendJson(req, 200, out); return;
       }
-      selected->status = "loading"; selected->updated = millis(); ordersDirty = true;
+      selected->status = "loading"; selected->updated = nowStamp(); ordersDirty = true;
       addLog("[ORDER] claim load " + selected->orderId);
       emitOrderUpdate(selected->orderId, selected->status);
       sendOrderWithPackages(req, *selected);
@@ -327,7 +348,7 @@ void setupWeb() {
       if (orderId.isEmpty() || status.isEmpty()) { sendJson(req, 400, makeErrorResponse("missing_fields")); return; }
       OrderRecord* order = findOrderById(orderId);
       if (!order) { sendJson(req, 404, makeErrorResponse("order_not_found")); return; }
-      order->status = status; order->updated = millis(); ordersDirty = true;
+      order->status = status; order->updated = nowStamp(); ordersDirty = true;
       addLog("[ORDER] update " + orderId + " -> " + status);
       StaticJsonDocument<1024> evt;
       evt["event"] = "order_updated"; evt["orderId"] = orderId; evt["status"] = status;
@@ -381,6 +402,18 @@ void setupWeb() {
       if (!appendPackageEvent(*pkg, node->nodeId, node->nodeName, eventName, err)) { sendJson(req, 500, makeErrorResponse(err.c_str())); return; }
       packagesDirty = true;
       addLog("[PKG] event " + packageId + " @ " + node->nodeId + " " + pkg->lastSeenLabel);
+      if (pkg->status == "delivered") {
+        // vsechny baliky objednavky doruceny -> objednavka je delivered
+        int totalPkgs = 0, deliveredPkgs = 0;
+        if (allPackagesForOrderHaveStatus(pkg->orderId, "delivered", totalPkgs, deliveredPkgs)) {
+          OrderRecord* ord = findOrderById(pkg->orderId);
+          if (ord && ord->status != "delivered") {
+            ord->status = "delivered"; ord->updated = nowStamp(); ordersDirty = true;
+            addLog("[ORDER] delivered " + ord->orderId);
+            emitOrderUpdate(ord->orderId, "delivered");
+          }
+        }
+      }
       emitPackageEventWs(*pkg, eventName, node->nodeId, node->nodeName);
       sendJson(req, 200, makeOkResponse([&](JsonObject data) {
         data["packageId"] = packageId; data["orderId"] = pkg->orderId;
@@ -435,7 +468,7 @@ void setupWeb() {
         }));
         return;
       }
-      order->status = "loaded"; order->updated = millis(); ordersDirty = true;
+      order->status = "loaded"; order->updated = nowStamp(); ordersDirty = true;
       addLog("[ORDER] load complete " + orderId);
       emitOrderUpdate(orderId, "loaded");
       sendJson(req, 200, makeOkResponse([&](JsonObject data) {

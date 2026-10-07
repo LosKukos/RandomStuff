@@ -40,6 +40,10 @@ bool isTimeSynced() {
   return now > 1672531200;
 }
 
+uint32_t nowStamp() {
+  return isTimeSynced() ? (uint32_t)time(nullptr) : (uint32_t)millis();
+}
+
 TimeSnapshot getTimeSnapshot() {
   TimeSnapshot snap;
   snap.uptimeMs = millis();

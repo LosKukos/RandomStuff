@@ -1,6 +1,7 @@
 #include "utils.h"
 #include "app_state.h"
 #include "sync.h"
+#include "time_service.h"
 #include <Arduino.h>
 #include <WiFi.h>
 
@@ -25,9 +26,9 @@ String genId() {
 }
 
 String genOrderId() {
-  static uint32_t orderCounter = 0;
-  orderCounter++;
-  return "ORD" + String(millis()) + "_" + String(orderCounter);
+  char suffix[5];
+  snprintf(suffix, sizeof(suffix), "%04x", (unsigned)(esp_random() & 0xFFFF));
+  return "ORD" + String(nowStamp()) + "_" + String(suffix);
 }
 
 bool isSTA(AsyncWebServerRequest* req) {

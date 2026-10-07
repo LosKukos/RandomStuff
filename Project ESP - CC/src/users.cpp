@@ -1,4 +1,5 @@
 #include "users.h"
+#include "time_service.h"
 #include "utils.h"
 #include <Arduino.h>
 
@@ -42,9 +43,9 @@ String generateToken() {
 }
 
 String generateUserId() {
-  static uint32_t counter = 0;
-  counter++;
-  return "USR" + String(millis()) + "_" + String(counter);
+  char suffix[5];
+  snprintf(suffix, sizeof(suffix), "%04x", (unsigned)(esp_random() & 0xFFFF));
+  return "USR" + String(nowStamp()) + "_" + String(suffix);
 }
 
 // ===== SERIALIZATION =====

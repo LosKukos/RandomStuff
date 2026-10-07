@@ -13,6 +13,10 @@ Složka kopíruje strukturu repa `Project ESP - CC/`. Stačí soubory přepsat (
 | `src/utils.h`, `src/utils.cpp` | přepsat | `addLog` pod `LogLock`, nová `getLogsCopy()` |
 | `src/main.cpp` | přepsat | Na začátku `initSync()` |
 | `src/app_state.h`, `src/orders.h`, `src/orders.cpp` | přepsat | Objednávka má `ownerId`; funkce `userOwnsOrder/Package` (vlastník = `ownerId`, jinak shoda `recipient` s mcName/username) |
+| `src/time_service.h/.cpp`, `src/utils.cpp`, `src/users.cpp` | přepsat | `nowStamp()` (epoch, když je NTP; jinak millis), ID objednávek a uživatelů = `ORD<epoch>_<náhodné>` (žádné kolize po rebootu) |
+| `src/orders.cpp/.h`, `src/packages.cpp`, `src/web.cpp` | přepsat | Stav `delivered` (balík i objednávka), `GET /api/orders/list`, `GET /api/packages/list`, mazání starých dokončených objednávek (drží posledních 20 s balíky) |
+| `src/command_task.cpp`, `src/persistence.cpp` | přepsat | Pruning 1× za minutu; uložení se přeskočí, pokud by dokument přetekl (původní soubor zůstane, žádná ztráta dat při bootu) |
+| `data/index.html` + `data/index.html.gz` | přepsat + `uploadfs` | Admin overview čte všechny objednávky a balíky místo `pending` |
 | `src/mqtt_bridge.h` | přepsat | Nové `mqttBroadcastPublic()` |
 | `src/secrets.h` | **NOVÝ** (nekomitovat!) | MQTT host/port/uživatel/heslo pro EMQX. Testovací údaje jsou vyplněné, před ostrým provozem změnit |
 | `src/secrets.example.h` | **NOVÝ** | Šablona bez hesel (tu komitovat) |
@@ -40,6 +44,12 @@ Složka kopíruje strukturu repa `Project ESP - CC/`. Stačí soubory přepsat (
 - Topicy se nezakládají, vzniknou při prvním použití. Zbývá jen volitelné ACL.
 - Test: po flashi `/api/logs` ukáže `[MQTT] connected to broker`; na webu se rozsvítí tečka připojení a jde Register/Login.
 - Ostrý provoz: dva účty v EMQX (`esp`, `web`) s ACL (viz tabulka v konverzaci), nová hesla do `secrets.h` a `remote.html`.
+
+## Stav `delivered` (nastavení v MC)
+
+Cílový checkpoint (node u příjemce) musí posílat `event = "delivered"` místo `"pass"`: v `CC/node/config.lua` tohoto nodu nastav `event = "delivered"`. Průchozí nody nech na `"pass"`. Jakmile jsou všechny balíky objednávky `delivered`, objednávka přejde na `delivered`.
+
+Test: (1) `http://IP/api/orders/list` a `/api/packages/list` vrací vše; (2) po přepnutí cílového nodu a průchodu balíku se balík i objednávka přepnou na `delivered`; (3) nové objednávky mají ID `ORD<epoch>_xxxx`; (4) po více než 20 dokončených objednávkách se v logu objeví `[PRUNE] removed`.
 
 ## Oprávnění (krok 2)
 

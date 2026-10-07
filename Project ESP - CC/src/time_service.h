@@ -13,4 +13,5 @@ struct TimeSnapshot {
 void initTimeService();
 void syncTimeService();
 bool isTimeSynced();
+uint32_t nowStamp();   // epoch (s), pokud je cas synchronizovany; jinak millis()
 TimeSnapshot getTimeSnapshot();

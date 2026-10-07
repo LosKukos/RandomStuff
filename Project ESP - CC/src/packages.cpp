@@ -41,8 +41,8 @@ bool registerPackageFromJson(JsonDocument& doc, PackageRecord& outPkg, bool& exi
   outPkg.address = doc["address"] | packageId;
   outPkg.destination = doc["destination"] | ""; outPkg.deliveryMode = doc["deliveryMode"] | "";
   outPkg.recipient = doc["recipient"] | ""; outPkg.status = doc["status"] | "packed";
-  if (outPkg.created == 0) outPkg.created = millis();
-  outPkg.updated = millis();
+  if (outPkg.created == 0) outPkg.created = nowStamp();
+  outPkg.updated = nowStamp();
   String contentsJson = "[]";
   if (doc["contents"].is<JsonVariantConst>()) serializeJson(doc["contents"], contentsJson);
   outPkg.contentsJson = contentsJson;
@@ -69,12 +69,13 @@ static bool appendHistoryEvent(PackageRecord& pkg, const String& actorId, const 
   if (updateCurrentNode) { pkg.currentNode = actorId; pkg.currentNodeName = actorName; }
   pkg.lastEvent = eventName; pkg.lastSeenMs = t.uptimeMs; pkg.lastSeenIso = t.iso; pkg.lastSeenLabel = t.label;
   if (!newStatus.isEmpty()) pkg.status = newStatus;
-  pkg.updated = millis();
+  pkg.updated = nowStamp();
   return true;
 }
 
 bool appendPackageEvent(PackageRecord& pkg, const String& nodeId, const String& nodeName, const String& eventName, String& err) {
-  return appendHistoryEvent(pkg, nodeId, nodeName, eventName, "in_transit", true, err);
+  // Node s event="delivered" (cilovy checkpoint) uzavira balik; ostatni "pass" = v preprave
+  return appendHistoryEvent(pkg, nodeId, nodeName, eventName, eventName == "delivered" ? "delivered" : "in_transit", true, err);
 }
 
 bool appendPackageSystemEvent(PackageRecord& pkg, const String& sourceId, const String& sourceName, const String& eventName, const String& newStatus, String& err) {

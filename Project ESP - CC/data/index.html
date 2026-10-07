@@ -1688,16 +1688,15 @@ async function loadOverview() {
     const nodesData = await nodesRes.json();
     renderOverviewNodes(nodesData.ok ? (nodesData.data?.nodes || []) : []);
 
-    // Orders — reuse pending + all via a generic list
-    // ESP doesn't have /api/orders/list yet so we use pending as proxy
-    // TODO: add /api/orders/list endpoint
-    const ordersRes = await fetch('/api/orders/pending', { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' });
+    // Orders - vsechny (admin na STA IP)
+    const ordersRes = await fetch('/api/orders/list');
     const ordersData = await ordersRes.json();
     renderOverviewOrders(ordersData.ok ? (ordersData.data?.orders || []) : []);
 
-    // Packages — no list endpoint yet, skip for now
-    // TODO: add /api/packages/list endpoint
-    renderOverviewPackages([]);
+    // Packages - vsechny
+    const pkgRes = await fetch('/api/packages/list');
+    const pkgData = await pkgRes.json();
+    renderOverviewPackages(pkgData.ok ? (pkgData.data?.packages || []) : []);
 
   } catch(e) {
     document.getElementById("overview-meta").textContent = "Failed to load data.";

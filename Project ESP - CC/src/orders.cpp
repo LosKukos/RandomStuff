@@ -1,4 +1,6 @@
 #include "orders.h"
+#include "time_service.h"
+#include <algorithm>
 #include "utils.h"
 
 OrderRecord* findOrderById(const String& orderId) {
@@ -38,13 +40,13 @@ bool createOrderFromJson(JsonDocument& doc, OrderRecord& outOrder, String& err) 
   if (destination.isEmpty()) { err = "missing_destination"; return false; }
   if (deliveryMode.isEmpty()) { err = "missing_deliveryMode"; return false; }
   if (!doc["items"].is<JsonArrayConst>() || doc["items"].as<JsonArrayConst>().size() == 0) { err = "missing_items"; return false; }
-  outOrder.orderId = genOrderId();
+  do { outOrder.orderId = genOrderId(); } while (findOrderById(outOrder.orderId));
   outOrder.status = "pending";
   outOrder.destination = destination;
   outOrder.deliveryMode = deliveryMode;
   outOrder.recipient = recipient;
-  outOrder.created = millis();
-  outOrder.updated = millis();
+  outOrder.created = nowStamp();
+  outOrder.updated = nowStamp();
   for (JsonObjectConst itemObj : doc["items"].as<JsonArrayConst>()) {
     OrderItem item;
     item.name = itemObj["name"] | "";
@@ -68,4 +70,33 @@ bool userOwnsPackage(const PackageRecord& pkg, const UserRecord& user) {
     if (order) return userOwnsOrder(*order, user);
   }
   return pkg.recipient == user.mcName || pkg.recipient == user.username;
+}
+
+// Drzime jen poslednich KEEP_FINISHED_ORDERS dokoncenych (delivered/failed) objednavek
+// vcetne jejich baliku - jinak by orders.json/packages.json casem prekrocily limit dokumentu.
+#define KEEP_FINISHED_ORDERS 20
+
+bool pruneFinishedOrders() {
+  std::vector<size_t> finished;
+  for (size_t i = 0; i < orders.size(); i++) {
+    if (orders[i].status == "delivered" || orders[i].status == "failed") finished.push_back(i);
+  }
+  if (finished.size() <= KEEP_FINISHED_ORDERS) return false;
+
+  std::sort(finished.begin(), finished.end(), [](size_t a, size_t b) { return orders[a].updated < orders[b].updated; });
+  size_t toRemove = finished.size() - KEEP_FINISHED_ORDERS;
+
+  std::vector<String> removedIds;
+  for (size_t r = 0; r < toRemove; r++) removedIds.push_back(orders[finished[r]].orderId);
+
+  auto isRemoved = [&](const String& id) {
+    for (const auto& rid : removedIds) if (rid == id) return true;
+    return false;
+  };
+  orders.erase(std::remove_if(orders.begin(), orders.end(), [&](const OrderRecord& o) { return isRemoved(o.orderId); }), orders.end());
+  packages.erase(std::remove_if(packages.begin(), packages.end(), [&](const PackageRecord& p) { return isRemoved(p.orderId); }), packages.end());
+
+  ordersDirty = true; packagesDirty = true;
+  addLog("[PRUNE] removed " + String(toRemove) + " finished orders");
+  return true;
 }

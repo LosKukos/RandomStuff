@@ -2,6 +2,7 @@
 #include "app_state.h"
 #include "utils.h"
 #include "persistence.h"
+#include "orders.h"
 #include "mqtt_bridge.h"
 #include "sync.h"
 #include <algorithm>
@@ -55,7 +56,13 @@ void commandTask(void* pvParameters) {
         lastQueueSave = now;
       }
 
-      if (meDirty && (now - lastMeSave > 5000)) {
+      static uint32_t lastPrune = 0;
+      if (now - lastPrune > 60000) {
+        lastPrune = now;
+        pruneFinishedOrders();
+      }
+
+      if (meDirty && (now - lastMeSave > 300000)) {
         saveME();
         lastMeSave = now;
       }

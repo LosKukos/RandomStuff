@@ -79,6 +79,7 @@ void loadME() {
 void saveOrders() {
   DynamicJsonDocument doc(24576); JsonArray arr = doc.to<JsonArray>();
   for (const auto& order : orders) { JsonObject o = arr.createNestedObject(); serializeOrder(o, order); }
+  if (doc.overflowed()) { addLog("[FS] orders.json: dokument pretekl, ukladani preskoceno (puvodni soubor zachovan)"); ordersDirty = false; return; }
   File f = LittleFS.open("/orders.json", "w");
   if (!f) { addLog("[FS] failed to open /orders.json for write"); return; }
   serializeJson(doc, f); f.close(); ordersDirty = false;
@@ -123,6 +124,7 @@ void savePackages() {
     o["lastSeenIso"] = pkg.lastSeenIso; o["lastSeenLabel"] = pkg.lastSeenLabel;
     o["historyJson"] = pkg.historyJson;
   }
+  if (doc.overflowed()) { addLog("[FS] packages.json: dokument pretekl, ukladani preskoceno (puvodni soubor zachovan)"); packagesDirty = false; return; }
   File f = LittleFS.open("/packages.json", "w");
   if (!f) { addLog("[FS] failed to open /packages.json for write"); return; }
   serializeJson(doc, f); f.close(); packagesDirty = false;
