@@ -91,7 +91,20 @@ static void handleAuthMessage(const String& msg) {
 
   if (action == "players") {
     // Verejne: seznam hracu online pro vyber v registraci (jeste nejsme prihlaseni, token nemame)
-    publishOut(responseTopic, String("{\"ok\":true,\"event\":\"players_online\",\"players\":") + playersOnline + "}");
+    // Jmena, ktera uz maji ucet, se nenabizeji (server je stejne odmitne: mcname_taken)
+    String freeList = "[]";
+    DynamicJsonDocument pl(4096);
+    if (!deserializeJson(pl, playersOnline) && pl.is<JsonArray>()) {
+      DynamicJsonDocument res(4096);
+      JsonArray arr = res.to<JsonArray>();
+      for (JsonVariant v : pl.as<JsonArray>()) {
+        const char* n = v.as<const char*>();
+        if (!n || !n[0] || findUserByMcName(String(n))) continue;
+        arr.add(String(n));
+      }
+      serializeJson(res, freeList);
+    }
+    publishOut(responseTopic, String("{\"ok\":true,\"event\":\"players_online\",\"players\":") + freeList + "}");
     return;
   }
 

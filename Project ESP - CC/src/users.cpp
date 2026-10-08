@@ -16,7 +16,7 @@ UserRecord* findUserByUsername(const String& username) {
 }
 
 UserRecord* findUserByMcName(const String& mcName) {
-  for (auto& u : users) { if (u.mcName == mcName) return &u; }
+  for (auto& u : users) { if (u.mcName.equalsIgnoreCase(mcName)) return &u; }   // MC jmena jsou case-insensitive
   return nullptr;
 }
 
@@ -71,6 +71,7 @@ bool registerUserFromJson(JsonDocument& doc, UserRecord& outUser, String& err) {
   String password = doc["password"] | "";
   String mcName   = doc["mcName"]   | "";
   String displayName = doc["displayName"] | "";
+  username.trim(); mcName.trim(); displayName.trim();
   if (displayName.isEmpty()) displayName = username;
 
   if (username.isEmpty()) { err = "missing_username"; return false; }
@@ -81,7 +82,9 @@ bool registerUserFromJson(JsonDocument& doc, UserRecord& outUser, String& err) {
   if (password.length() < 4)  { err = "password_too_short";  return false; }
 
   // Uniqueness checks
-  if (findUserByUsername(username)) { err = "username_taken"; return false; }
+  for (const auto& u : users) {
+    if (u.username.equalsIgnoreCase(username)) { err = "username_taken"; return false; }
+  }
   if (findUserByMcName(mcName))     { err = "mcname_taken";   return false; }
 
   outUser.userId       = generateUserId();
