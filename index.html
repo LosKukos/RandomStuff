@@ -362,7 +362,7 @@ const TOPIC_RES  = 'axis/res/';   // soukrome odpovedi: axis/res/<clientId>
 
 // DOCASNE PRO TESTOVANI: pokud ESP nema seznam hracu, dovol napsat MC jmeno rucne pri registraci.
 // PRED OSTRYM PROVOZEM NASTAV NA false (jinak si kdokoli muze nahlasit cizi jmeno).
-const DEV_ALLOW_MANUAL_MCNAME = true;
+const DEV_ALLOW_MANUAL_MCNAME = false;
 
 // ===== STATE =====
 let client        = null;
@@ -408,6 +408,8 @@ function showTab(name) {
   document.querySelectorAll('.main-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
   document.querySelectorAll('.tab-pane').forEach(p => p.style.display = 'none');
   document.getElementById('tab-' + name).style.display = 'block';
+  // Katalog se nepushuje (setri kvotu brokera) - pri otevreni kosiku si ho vyzadame cerstvy
+  if (name === 'basket' && currentUser && client?.connected) mqttCmd('get_me', {});
 }
 
 // ===== BIND UI EVENTS — called from DOMContentLoaded =====
@@ -539,7 +541,9 @@ function bindUIListeners() {
     btn.disabled = false; btn.textContent = 'Create Account';
     if (!res.ok) {
       const msgs = { username_taken: 'Username already taken.', mcname_taken: 'MC name already linked to an account.', username_too_short: 'Username too short (min 3).', password_too_short: 'Password too short (min 4).', missing_mcName: 'Select your MC name.', timeout: 'No response from server.' };
-      errorEl.textContent = msgs[res.error] || res.error || 'Registration failed.'; return;
+      errorEl.textContent = msgs[res.error] || res.error || 'Registration failed.';
+      if (res.error === 'mcname_taken') loadPlayersForRegister();   // obnov nabidku, jmeno uz neni volne
+      return;
     }
     sessionToken = res.sessionToken;
     currentUser  = { userId: res.userId, username: res.username, mcName: res.mcName, displayName: res.displayName };
@@ -868,7 +872,8 @@ function wireMessages() {
     if (data.items && Array.isArray(data.items)) { handleMeUpdate(data.items); return; }
 
     if (data.event === 'players_online' && Array.isArray(data.players)) {
-      fillPlayers(data.players);
+      // broadcast obsahuje vsechny online hrace - dropdown plnime jen z filtrovane odpovedi serveru
+      if (!currentUser) loadPlayersForRegister();
       return;
     }
 
