@@ -1,0 +1,20 @@
+local spk = peripheral.find("speaker")
+if not spk then error("Zadny speaker") end
+
+print("Typ: " .. peripheral.getType(spk))
+print("Metody:")
+local m = peripheral.getMethods(peripheral.getName(spk))
+table.sort(m)
+print(table.concat(m, ", "))
+print("")
+
+local URL = "http://ice1.somafm.com/groovesalad-128-mp3"
+
+print("HTTP povoleno: " .. tostring(http ~= nil))
+print("URL povolena: " .. tostring(select(1, http.checkURL(URL))))
+
+local ok, err = pcall(spk.speakerPlay, URL, 1.0)
+print("speakerPlay(URL): ", ok, err)
+sleep(3)
+print("isStreaming: ", pcall(spk.isStreaming))
+print("isPlaying:   ", pcall(spk.speakerIsPlaying))
