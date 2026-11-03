@@ -1,0 +1,41 @@
+local URL = "https://ice.somafm.com/groovesalad"
+local VOLUME = 1.0
+
+local spk = peripheral.find("speaker")
+if not spk then
+  error("Nenasel jsem reproduktor. Pripoj ho k pocitaci.")
+end
+
+-- zkusi pustit stream pres URL
+local ok, err = pcall(spk.speakerPlay, URL, VOLUME)
+if not ok then
+  print("speakerPlay(URL) nefunguje: " .. tostring(err))
+  print("Dostupne metody se 'stream' v nazvu:")
+  for _, m in ipairs(peripheral.getMethods(peripheral.getName(spk))) do
+    if m:lower():find("stream") or m:lower():find("url") then
+      print(" - " .. m)
+    end
+  end
+  return
+end
+
+print("Pousti: " .. URL)
+print("Ctrl+T ukonci skript (hudba pak zastavi speakerStop).")
+
+local function safe(f)
+  local ok, v = pcall(f)
+  return ok and v or nil
+end
+
+-- vypisuje, co prave hraje
+local last
+while true do
+  local title  = safe(spk.getStreamTitle)
+  local artist = safe(spk.getStreamArtist)
+  local song   = title or safe(spk.getStreamSong)
+  if song and song ~= last then
+    last = song
+    print((artist and (artist .. " - ") or "") .. tostring(song))
+  end
+  sleep(5)
+end
