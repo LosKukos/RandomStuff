@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard</title>
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="stylesheet" href="/style.css?v=16" />
+</head>
+<body>
+
+  <!-- MODE GATE -->
+  <div id="mode-gate" class="mode-gate hidden">
+    <div class="mode-card">
+      <div class="mode-kicker">ESP32 Dashboard</div>
+      <h2>Vyber režim přístupu</h2>
+      <p>
+        <b>Local</b> používá lokální mDNS adresy v domácí síti.
+        <b>Remote</b> používá IP počítače <b>172.27.167.45</b> a port konkrétního zařízení.
+      </p>
+      <div class="mode-actions">
+        <button type="button" class="mode-choice local" onclick="setAccessMode('local')">
+          <span class="mode-icon">⌂</span>
+          <span><b>Local</b><small>wled-pokoj.local / mc.local</small></span>
+        </button>
+        <button type="button" class="mode-choice remote" onclick="setAccessMode('remote')">
+          <span class="mode-icon">⇄</span>
+          <span><b>Remote</b><small>172.27.167.45 + port zařízení</small></span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ALARM OVERLAY -->
+  <div id="alarm-overlay" class="alarm-overlay hidden">
+    <div class="alarm-card">
+      <div class="alarm-kicker">🚨 SOS</div>
+      <h2 id="alarm-device-name">Panic Button</h2>
+      <p id="alarm-event-id" class="alarm-meta"></p>
+      <p id="alarm-time" class="alarm-meta"></p>
+      <div class="alarm-pulse"></div>
+    </div>
+  </div>
+
+  <main>
+
+    <!-- CLOCK BLOCK -->
+    <div class="clock-block">
+      <div class="clock-time" id="clock">--:--:--</div>
+      <div class="clock-date" id="clock-date">-</div>
+      <div class="clock-names" id="clock-names">-</div>
+      <div class="clock-mode">
+        <button id="access-mode-btn" class="mode-pill" type="button" onclick="resetAccessMode()">
+          Mode: -
+        </button>
+      </div>
+    </div>
+
+    <!-- CLIMATE (DHT11 vnitřní / DHT22 venkovní) -->
+    <div id="climate-row" class="climate-row">
+      <div class="empty">Čekám na senzory...</div>
+    </div>
+
+    <!-- WEATHER HERO -->
+    <div id="weather-hero" class="weather-hero">
+      <div class="empty">Čekám na počasí...</div>
+    </div>
+
+    <!-- FORECAST -->
+    <div id="forecast-row" class="forecast-row"></div>
+
+    <!-- MOON -->
+    <div id="moon-card" class="moon-card"></div>
+
+    <!-- DEVICES -->
+    <div class="section-head">Zařízení</div>
+    <div id="desktop-card"></div>
+    <div id="devices"></div>
+
+    <!-- STAT CARDS -->
+    <div class="stat-cards" id="stat-cards">
+      <div class="stat-card">
+        <div class="stat-label">Síť</div>
+        <div class="stat-value" id="stat-ip">-</div>
+        <div class="stat-sub" id="stat-net">-</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">ESP32</div>
+        <div class="stat-value" id="stat-heap">-</div>
+        <div class="stat-sub" id="stat-esp">-</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">WebSocket</div>
+        <div class="stat-value" id="stat-ws"><span class="ws-dot"></span> -</div>
+        <div class="stat-sub" id="stat-ws-time">-</div>
+      </div>
+    </div>
+
+    <!-- SVÁTEK COLLAPSED -->
+    <div class="collapse-card" data-section="svatek">
+      <button class="collapse-head" type="button" onclick="toggleSection('svatek')">
+        <div>
+          <h2>Svátek &amp; Discord</h2>
+          <p id="svatek-summary">-</p>
+        </div>
+        <span class="collapse-icon" id="icon-svatek">›</span>
+      </button>
+      <div class="collapse-body" id="section-svatek">
+        <div id="svatek" class="inner-panel">
+          <div class="empty">-</div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <script src="/app.js?v=16"></script>
+</body>
+</html>
