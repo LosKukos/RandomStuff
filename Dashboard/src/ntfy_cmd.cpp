@@ -27,7 +27,7 @@ void ntfyCmdPoll() {
   client.setInsecure();
   http.setTimeout(8000);
 
-  String url = String("https://ntfy.sh/") + NTFY_REPORT_TOPIC + "/json?poll=1&since=" + sinceParam;
+  String url = String("https://ntfy.sh/") + NTFY_CMD_TOPIC + "/json?poll=1&since=" + sinceParam;
   if (!http.begin(client, url)) return;
 
   const int code = http.GET();
@@ -67,6 +67,6 @@ void ntfyCmdPoll() {
     logLine(F("[NTFY-CMD] WOL prikaz prijat"));
     const bool ok = wakeDesktop();
     ntfyPostQuiet(ok ? "WOL odeslan" : "WOL selhal",
-                  String(ok ? "Magic packet odeslan na " : "Magic packet se nepodarilo odeslat na ") + WOL_TARGET_MAC);
+                  String(ok ? "Magic packet odeslan na " : "Magic packet se nepodarilo odeslat na ") + WOL_TARGET_MAC, "min", NTFY_CMD_TOPIC);
   }
 }

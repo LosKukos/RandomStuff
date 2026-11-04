@@ -236,6 +236,34 @@ void startDashboardServer() {
     request->send(202, "application/json", buildDashboardJson(false));
   });
 
+  // Sledovane svatky: POST /api/watch?names=Jan,Petr -> /watch.json (LittleFS, persistentni)
+  // GET jde pres serveStatic (/watch.json)
+  server.on("/api/watch", HTTP_POST, [](AsyncWebServerRequest *request) {
+    String raw = request->hasParam("names") ? request->getParam("names")->value() : "";
+    if (raw.length() > 600) {
+      request->send(400, "application/json", "{\"ok\":false,\"message\":\"too long\"}");
+      return;
+    }
+    JsonDocument out;
+    JsonArray arr = out.to<JsonArray>();
+    int start = 0;
+    while (start <= (int)raw.length() && arr.size() < 30) {
+      int comma = raw.indexOf(',', start);
+      if (comma < 0) comma = raw.length();
+      String n = raw.substring(start, comma);
+      n.trim();
+      if (n.length() > 0 && n.length() <= 30) arr.add(n);
+      start = comma + 1;
+    }
+    File f = LittleFS.open("/watch.json", "w");
+    bool ok = false;
+    if (f) { ok = serializeJson(out, f) > 0 || arr.size() == 0; f.close(); }
+    JsonDocument doc;
+    doc["ok"]    = ok;
+    doc["count"] = arr.size();
+    sendJsonResponse(request, ok ? 200 : 500, doc);
+  });
+
   // Rucni WOL z dashboardu (UDP broadcast, rychle a neblokujici)
   server.on("/api/wol", HTTP_POST, [](AsyncWebServerRequest *request) {
     const bool ok = wakeDesktop();

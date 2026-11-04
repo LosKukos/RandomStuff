@@ -1538,3 +1538,16 @@ button:disabled { opacity: 0.5; cursor: default; transform: none; }
   text-orientation: mixed;
   transform: rotate(180deg);
 }
+
+.watch-add { display: flex; gap: 8px; margin-bottom: 12px; }
+.watch-add input {
+  flex: 1; min-width: 0; padding: 10px 12px; border-radius: 12px;
+  border: 1px solid var(--card-border); background: rgba(255,255,255,0.05);
+  color: inherit; font: inherit;
+}
+.watch-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.watch-chip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px 4px 12px;
+  border-radius: 999px; border: 1px solid var(--card-border); background: rgba(255,255,255,0.06);
+}
+.watch-chip button { padding: 2px 8px; min-height: 0; border-radius: 999px; font-size: 12px; }

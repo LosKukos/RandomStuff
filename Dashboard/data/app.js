@@ -731,3 +731,88 @@ showModeGateIfNeeded();
 connectWebSocket();
 fetchStatusFallback();
 setInterval(fetchStatusFallback, 5000);
+
+// ============================================================
+// SLEDOVANE SVATKY (persist: /watch.json na ESP)
+// ============================================================
+
+let watchList = [];
+let namesDb = null;
+
+function normName(x) {
+  return String(x).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+}
+
+async function loadWatch() {
+  try {
+    const [w, n] = await Promise.all([
+      fetch("/watch.json", { cache: "no-store" }).then(r => r.ok ? r.json() : []),
+      namesDb ? Promise.resolve(namesDb) : fetch("/names.json", { cache: "no-store" }).then(r => r.json())
+    ]);
+    watchList = Array.isArray(w) ? w : [];
+    namesDb = n;
+  } catch (e) { /* ignore */ }
+  renderWatch();
+}
+
+async function saveWatch() {
+  renderWatch();
+  try {
+    await fetch(`/api/watch?names=${encodeURIComponent(watchList.join(","))}`, { method: "POST", cache: "no-store" });
+  } catch (e) { /* ignore */ }
+}
+
+function addWatch() {
+  const inp = document.getElementById("watch-input");
+  const v = inp ? inp.value.trim() : "";
+  if (!v) return;
+  if (!watchList.some(x => normName(x) === normName(v))) watchList.push(v);
+  inp.value = "";
+  saveWatch();
+}
+
+function removeWatch(i) {
+  watchList.splice(i, 1);
+  saveWatch();
+}
+
+function renderWatch() {
+  const chips = document.getElementById("watch-chips");
+  const up = document.getElementById("watch-upcoming");
+  const sum = document.getElementById("watch-summary");
+  if (!chips || !up || !sum) return;
+
+  chips.innerHTML = watchList.map((n, i) =>
+    `<span class="watch-chip">${escapeHtml(n)} <button type="button" onclick="removeWatch(${i})">✕</button></span>`
+  ).join("") || `<div class="empty">Zatím nic nesleduješ.</div>`;
+
+  const dayNames = ["Ne","Po","Út","St","Čt","Pá","So"];
+  const wanted = new Set(watchList.map(normName));
+  const hits = [];
+  if (namesDb && wanted.size) {
+    const now = new Date();
+    for (let d = 0; d < 7; d++) {
+      const dt = new Date(now.getFullYear(), now.getMonth(), now.getDate() + d);
+      const key = String(dt.getMonth() + 1).padStart(2, "0") + "-" + String(dt.getDate()).padStart(2, "0");
+      const entries = namesDb[key] || [];
+      const tokens = entries.join(" ").split(/[^\p{L}]+/u).map(normName).filter(Boolean);
+      const matched = watchList.filter(w => tokens.includes(normName(w)));
+      if (matched.length) hits.push({ d, dt, matched });
+    }
+  }
+
+  up.innerHTML = hits.length
+    ? hits.map(h => {
+        const when = h.d === 0 ? "dnes" : h.d === 1 ? "zítra" : `za ${h.d} dny`;
+        const date = `${dayNames[h.dt.getDay()]} ${h.dt.getDate()}. ${h.dt.getMonth() + 1}.`;
+        return row(`${date} · ${when}`, h.matched.join(", "));
+      }).join("")
+    : `<div class="empty">${watchList.length ? "Tento týden nikdo ze sledovaných." : "-"}</div>`;
+
+  sum.textContent = hits.length
+    ? hits.map(h => `${h.matched.join(", ")} (${h.d === 0 ? "dnes" : h.d === 1 ? "zítra" : dayNames[h.dt.getDay()]})`).join(" · ")
+    : (watchList.length ? "Tento týden nikdo" : "Nic nesleduješ");
+}
+
+loadWatch();
+setInterval(renderWatch, 10 * 60 * 1000);
