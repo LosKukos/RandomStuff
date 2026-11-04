@@ -9,7 +9,7 @@
 int sendNtfyReport(const String &title, const String &body, const char *priority = "min");
 
 // POST na topic bez zapisu do stavu reportu (potvrzeni WOL apod.)
-void ntfyPostQuiet(const String &title, const String &body, const char *priority = "min");
+void ntfyPostQuiet(const String &title, const String &body, const char *priority = "min", const char *topic = nullptr);
 
 // posledni vysledek reportu (pro /api/status) - 0 = jeste neodeslano
 int      ntfyReportLastCode();

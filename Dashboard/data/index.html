@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Dashboard</title>
   <link rel="icon" href="/favicon.ico" sizes="any">
-  <link rel="stylesheet" href="/style.css?v=16" />
+  <link rel="stylesheet" href="/style.css?v=17" />
 </head>
 <body>
 
@@ -112,8 +112,29 @@
       </div>
     </div>
 
+    <!-- SLEDOVANE SVATKY -->
+    <div class="collapse-card" data-section="watch">
+      <button class="collapse-head" type="button" onclick="toggleSection('watch')">
+        <div>
+          <h2>Sledované svátky</h2>
+          <p id="watch-summary">-</p>
+        </div>
+        <span class="collapse-icon" id="icon-watch">›</span>
+      </button>
+      <div class="collapse-body" id="section-watch">
+        <div class="inner-panel">
+          <div class="watch-add">
+            <input id="watch-input" type="text" maxlength="30" placeholder="Jméno (např. Petr)" onkeydown="if(event.key==='Enter')addWatch()">
+            <button type="button" onclick="addWatch()">+ Přidat</button>
+          </div>
+          <div id="watch-chips" class="watch-chips"></div>
+          <div id="watch-upcoming" class="rows"></div>
+        </div>
+      </div>
+    </div>
+
   </main>
 
-  <script src="/app.js?v=16"></script>
+  <script src="/app.js?v=17"></script>
 </body>
 </html>

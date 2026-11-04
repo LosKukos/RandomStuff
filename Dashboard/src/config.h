@@ -58,8 +58,9 @@ extern const char* discordRoleId;
 #define CLIMATE_MAX_FAILS 3
 // Hodinovy report na ntfy (https://ntfy.sh/<topic>), posila se v :00-:02 kazde hodiny
 #define NTFY_REPORT_TOPIC        "loskukos_dash"
+#define NTFY_CMD_TOPIC           "loskukos_cmd"          // prikazy (WOL) + jejich potvrzeni
 
-// Wake-on-LAN: zprava "WOL" v ntfy topicu NTFY_REPORT_TOPIC probudi desktop
+// Wake-on-LAN: zprava "WOL" v ntfy topicu NTFY_CMD_TOPIC probudi desktop
 #define WOL_TARGET_MAC           "74:56:3C:A6:15:33"   // <-- DOPLN MAC desktopu (format AA:BB:CC:DD:EE:FF)
 #define NTFY_CMD_POLL_INTERVAL_MS 15000UL              // jak casto ESP kontroluje nove zpravy
 

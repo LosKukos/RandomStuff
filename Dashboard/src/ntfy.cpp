@@ -35,13 +35,13 @@ void sendNtfyPanic(const String &deviceName, const String &eventId, int repeatCo
 }
 
 // jednoduchy POST na topic bez zapisu do stavu reportu (potvrzeni WOL apod.)
-void ntfyPostQuiet(const String &title, const String &body, const char *priority) {
+void ntfyPostQuiet(const String &title, const String &body, const char *priority, const char *topic) {
   if (WiFi.status() != WL_CONNECTED) return;
   HTTPClient http;
   WiFiClientSecure client;
   client.setInsecure();
   http.setTimeout(8000);
-  if (!http.begin(client, String("https://ntfy.sh/") + NTFY_REPORT_TOPIC)) return;
+  if (!http.begin(client, String("https://ntfy.sh/") + (topic ? topic : NTFY_REPORT_TOPIC))) return;
   http.addHeader("Title",    title);
   http.addHeader("Priority", priority);
   http.POST(body);
