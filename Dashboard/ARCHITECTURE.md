@@ -1,168 +1,256 @@
-# ESP32 Dashboard (V1 / Legacy) – architektura
+# ESP32 Dashboard (Dashboard climate V1) – architektura
 
-Network-ops control panel pro domácí síť: sleduje stav ESPček (WLED,
-Minecraft controller, panic-button), řeší denní hlášku "Dnes má
-svátek..." na Discord a panic/SOS alarm s ntfy notifikacemi.
+Domácí dashboard na ESP32-S3: network-ops panel (WLED, Minecraft controller, panic-button), denní svátková hláška na Discord, SOS/panic alarm, klima (DHT11/DHT22), počasí + měsíc, hodinový report na ntfy a Wake-on-LAN + health check desktopu.
 
-Tento dokument popisuje stav **po refaktoru** z jednoho `main.cpp`
-(1465 řádků) do modulů. Logika je 1:1 stejná jako v původní verzi,
-jen rozdělená + s vylepšenou task architekturou (viz [Emergency mode](#emergency-mode)).
+Stav k 2026-11-04. Aktuální rozpracované věci a pravidla pro práci jsou v [HANDOFF.md](HANDOFF.md), tento dokument popisuje strukturu kódu.
 
----
+* * *
 
-## Přehled modulů
+## Platforma
 
-| Soubor | Co řeší |
-|---|---|
-| `config.h/.cpp` | WiFi credentials, Discord webhook, piny, konstanty/intervaly. **Tady jsou natvrdo secrets** – OK pro priv repo. |
-| `state.h/.cpp` | Veškerý globální stav: mutexy, `DeviceState`, `AlarmState`, gettery/settery pro flagy (`netReady`, `timeReady`, ...). Jediné místo, kde se sahá na globální proměnné přímo. |
-| `log_util.h/.cpp` | `logLine`/`logValue`/`printDivider` – mutex-protected Serial výstup. |
-| `led.h/.cpp` | NeoPixel stavová LED (zelená/modrá/červená podle `state.h` flagů). |
-| `discord.h/.cpp` | `sendMessage()` – POST na Discord webhook s role mention. |
-| `ntfy.h/.cpp` | `sendNtfyPanic()` – SOS push na ntfy.sh. |
-| `time_svatky.h/.cpp` | NTP, čtení `/names.json` (jmeniny), `/state.json` (last_sent), `shouldAutoSend()`, `doManualSend()`. |
-| `devices.h/.cpp` | mDNS resolve s fallbackem, WLED polling/ovládání, polling vlastních ESPček (mc, panic-button). |
-| `wifi_setup.h/.cpp` | `scanWifi()`, `connectWiFi()`. |
-| `web_server.h/.cpp` | AsyncWebServer routy, websocket (`/ws`), `buildDashboardJson()`, `/api/panic` handler. |
-| `diagnostics.h/.cpp` | `printDiagnostics()`, `doDiagnostics()` (DIAG tlačítko), `heartbeat()`. |
-| `tasks.h/.cpp` | ISR pro tlačítka, 4 statické RTOS tasky (viz níže). |
-| `main.cpp` | Jen `setup()` a `loop()` – orchestrace, žádná byznys logika. |
+- ESP32-S3 (`esp32-s3-devkitc-1`, `qio_opi`, 8 MB PSRAM), PlatformIO + Arduino, jeden env `[env:esp32s3]`, LittleFS.
+- Knihovny: AsyncTCP, ESPAsyncWebServer, ArduinoJson v7, Adafruit NeoPixel, PubSubClient, DHT sensor library, Adafruit Unified Sensor.
+- GPIO 26–37 jsou na S3 s octal PSRAM nepoužitelné (flash/PSRAM).
+- UI se nahrává do LittleFS (`data/` → `pio run -t uploadfs`).
 
-**Pravidlo:** globální proměnné ze `state.h` se nikdy nečtou/nepíšou
-přímo odjinud – vždy přes `getX()`/`setX()`, které si hlídají
-`stateMutex`/`deviceMutex`/`alarmMutex`. Když potřebuješ novou
-hodnotu stavu, přidej pár getter/setter do `state.h/.cpp`, ne novou
-globálku do jiného souboru.
+## Struktura repa
 
----
+```
+Dashboard/
+├── platformio.ini
+├── src/                 firmware (moduly níže)
+├── data/                UI + data na LittleFS: index.html, app.js, style.css, favicon.ico, names.json
+├── remote_setup.bat     ZeroTier port forward (spouštět jako admin)
+├── remote_teardown.bat  zrušení port forwardu
+├── HANDOFF.md           stav + pravidla pro nový chat
+└── ARCHITECTURE.md      tento soubor
+```
+
+Za běhu vznikají na LittleFS ještě `/state.json` (`last_sent`) a `/watch.json` (sledovaná jména).
+
+* * *
+
+## Moduly (`src/`)
+
+| Soubor               | Co řeší                                                                                                                                  |
+|----------------------|------------------------------------------------------------------------------------------------------------------------------------------|
+| `config.h/.cpp`      | Defines (piny, intervaly, hosty, topicy, souřadnice) v `.h`; WiFi, Discord webhook a role ID jako konstanty v `.cpp`.                    |
+| `state.h/.cpp`       | Mutexy, boot counter (RTC), flagy s get/set, struktury `DeviceState`, `AlarmState`, `WeatherState`, `ClimateState`, `DesktopState`.      |
+| `log_util.h/.cpp`    | `logLine`/`logValue`/`printDivider` – Serial výstup chráněný `serialMutex`.                                                              |
+| `led.h/.cpp`         | Onboard NeoPixel: stavová LED (viz [LED stavy](#led-stavy)).                                                                             |
+| `wifi_setup.h/.cpp`  | `scanWifi()`, `connectWiFi()` (timeout `WIFI_TIMEOUT_MS`).                                                                               |
+| `devices.h/.cpp`     | mDNS (`dash.local`), resolve s cache/fallbackem, polling WLED a vlastních ESP (mc, panic-button), ovládání WLED.                         |
+| `time_svatky.h/.cpp` | NTP + TZ, `/names.json` (jmeniny), `/state.json` (last_sent), `shouldAutoSend()`, `doManualSend()`.                                      |
+| `discord.h/.cpp`     | `sendMessage()` – POST na webhook s role mention.                                                                                        |
+| `ntfy.h/.cpp`        | `sendNtfyPanic()` (SOS), `sendNtfyReport()` (hodinový report, ukládá poslední kód), `ntfyPostQuiet()` (potvrzení, ONLINE/OFFLINE).      |
+| `ntfy_cmd.h/.cpp`    | Poll příkazového topicu (`NTFY_CMD_TOPIC`), zatím jediný příkaz `WOL`.                                                                   |
+| `wol.h/.cpp`         | `sendMagicPacket()` – UDP broadcast na porty 9 a 7.                                                                                      |
+| `desktop.h/.cpp`     | `wakeDesktop()`, health check desktopu (TCP connect), debounce, ntfy ONLINE/OFFLINE.                                                     |
+| `sensors.h/.cpp`     | DHT11 (indoor) + DHT22 (outdoor), validace po sobě jdoucích selhání, kruhový buffer pro trend.                                           |
+| `weather.h/.cpp`     | Open-Meteo (bez API klíče), WMO kód → ikona/popis, východ/západ, fáze měsíce počítaná lokálně.                                           |
+| `diagnostics.h/.cpp` | `printDiagnostics()`, `doDiagnostics()`, `heartbeat()`, `resetReasonStr()`.                                                              |
+| `web_server.h/.cpp`  | AsyncWebServer routy, websocket `/ws`, `buildDashboardJson()`, `broadcastDashboard()`.                                                   |
+| `tasks.h/.cpp`       | ISR pro tlačítka, 7 statických RTOS tasků, `requestRefreshAll()`, `requestNtfyTest()`.                                                   |
+| `main.cpp`           | Jen `setup()` a `loop()`.                                                                                                                |
+
+* * *
+
+## Boot (`setup()`)
+
+1. Serial, `initMutexes()`, `bootCounter++` (`RTC_DATA_ATTR` – přežije soft reset a deep sleep, ne výpadek napájení), LED, tlačítka (GPIO 16 SEND / 17 DIAG, `INPUT_PULLUP`, přerušení na FALLING).
+2. Mount LittleFS. Při selhání: `fatalError`, červená LED a `setup()` skončí – bez WiFi, serveru i tasků.
+3. `scanWifi()` → `connectWiFi()`. Timeout nastaví `fatalError` a `netReady=false`.
+4. Pokud WiFi běží: mDNS (`dash.local`).
+5. `startDashboardServer()`.
+6. Pokud `netReady`: `setupTime()` (NTP, až 20 × 500 ms, TZ `CET-1CEST,M3.5.0/2,M10.5.0/3`) + načtení `last_sent`.
+7. `startBackgroundTasks()` (nejdřív `initSensors()`), první `broadcastDashboard()`.
+
+`loop()` (Arduino task, core 1) dělá jen: `ws.cleanupClients()`, zpracování tlačítek (SEND → `doManualSend`, DIAG → `doDiagnostics`), heartbeat log + broadcast každých 10 s, update LED, `delay(20)`. Tlačítka zatím nejsou fyzicky zapojená.
+
+* * *
+
+## Stav a mutexy
+
+| Mutex           | Chrání                                                              |
+|-----------------|---------------------------------------------------------------------|
+| `serialMutex`   | Serial výstup                                                       |
+| `ledMutex`      | NeoPixel                                                            |
+| `stateMutex`    | skalární flagy, `timeinfo`, řetězce svátků (`currentNames`, `lastSent`, …) |
+| `deviceMutex`   | `wledPokoj`, `mcEsp`, `panicNode` a `desktop`                       |
+| `alarmMutex`    | `activeAlarm`                                                       |
+| `weatherMutex`  | `weather`                                                           |
+| `climateMutex`  | `climate`                                                           |
+
+`lockMutex()` má default timeout 1 s a mutexy nejsou rekurzivní (get/set funkce si berou `stateMutex` samy, takže se nesmí volat uvnitř jeho bloku).
+
+**Pravidlo:** skalární flagy a řetězce svátků se čtou/píšou jen přes `getX()`/`setX()`. Strukturované stavy (`DeviceState`, `AlarmState`, `WeatherState`, `ClimateState`, `DesktopState`) jsou `extern` a přistupuje se k nim jen mezi `lockMutex`/`unlockMutex` jejich mutexu. Blokující operace (DHT čtení, HTTP) se dělají mimo mutex.
+
+* * *
 
 ## RTOS tasky
 
-Vše běží na **core 1** (core 0 je vyhrazený WiFi/BT stacku), staticky
-alokované (`xTaskCreateStaticPinnedToCore` – žádné heap fragmentace
-z task creation).
+Všechny jsou staticky alokované (`xTaskCreateStaticPinnedToCore`, core 1; core 0 je pro WiFi/BT stack). Celkem 64 KiB stacků v interní RAM.
 
-| Task | Stack | Priorita | Interval | Co dělá |
-|---|---|---|---|---|
-| `WledPollTask` | 4096 B | 1 | 5 s | poll `/json/info` + `/json/state` z WLED |
-| `EspPollTask` | 4096 B | 1 | 5 s | poll `mc.local` a `panic-button.local` (`/api/dash-status`) |
-| `AutoLogicTask` | 8192 B | 1 | 60 s | NTP refresh, kontrola okna 00:01–00:15, denní Discord hláška |
-| `EmergencyTask` | 8192 B | **2** (vyšší) | 1–2 s | viz Emergency mode níže |
+| Task            | Stack    | Prio  | Interval                                   | Co dělá                                                                                          |
+|-----------------|----------|-------|--------------------------------------------|--------------------------------------------------------------------------------------------------|
+| `WledPollTask`  | 4096 B   | 1     | 5 s (`DEVICE_POLL_INTERVAL_MS`) + notify   | `pollWLED()` + broadcast                                                                         |
+| `EspPollTask`   | 4096 B   | 1     | 5 s + notify                               | poll `mc` a `panic-button` (`/api/dash-status`, HTTP timeout 1,5 s) + broadcast                  |
+| `AutoLogicTask` | 8192 B   | 1     | 60 s                                       | aktualizace času, auto-odeslání svátku na Discord                                                |
+| `EmergencyTask` | 8192 B   | **2** | 2 s idle / 1 s při alarmu                  | viz [Emergency mode](#emergency-mode)                                                            |
+| `WeatherTask`   | 16384 B  | 1     | 15 min (`WEATHER_POLL_INTERVAL_MS`) + notify | `pollWeather()` (TLS)                                                                          |
+| `ClimateTask`   | 12288 B  | 1     | 60 s + notify                              | DHT čtení, hodinový ntfy report (TLS)                                                            |
+| `NtfyCmdTask`   | 12288 B  | 1     | tick 1 s                                   | ntfy příkazy každých 15 s, health check desktopu každých 15 s (3 s po WOL, 180 s)                |
 
-Plus hlavní `loop()` (Arduino task, core 1): websocket cleanup,
-zpracování tlačítek (SEND/DIAG), heartbeat log co 10 s, LED update.
+Tasky s „notify“ se vzbudí přes `xTaskNotifyGive` (manuální refresh, ntfy test). Důvod rozdělení pollerů: pomalá WLED nezdrží monitoring panic-buttonu a naopak.
 
-**Proč rozdělené pollery:** původně jeden task dělal WLED + mc +
-panic-button sekvenčně (až ~4.5 s blokování na 5s cyklus). Teď pomalá/
-nedostupná WLED nezdrží monitoring panic-buttonu a naopak.
-
----
+* * *
 
 ## Emergency mode
 
-Cíl: když přijde SOS z panic-buttonu, dashboard se má **soustředit
-jen na to** – žádný zbytečný polling/HTTP provoz, jen opakované
-notifikace, dokud to někdo fyzicky neresetuje.
-
-### Flow
+Cíl: po SOS z panic-buttonu omezit zbytečný provoz a držet se opakovaných notifikací, dokud někdo fyzicky neresetuje.
 
 1. Panic-button POSTne `/api/panic` s `type=panic`.
-2. `web_server.cpp` handler nastaví `activeAlarm.active = true`,
-   uloží eventId/deviceId/deviceName, hned odešle **první** ntfy
-   notifikaci a broadcastne stav přes websocket.
-3. Frontend (`app.js`/`style.css`) na `alarm.active === true`
-   zobrazí fullscreen červený lockscreen overlay – uživatel nevidí
-   normální dashboard, jen "SOS" kartu.
-4. `EmergencyTask` na dalším ticku zjistí `active == true` poprvé a:
-   - `vTaskSuspend()` na `WledPollTask`, `EspPollTask`, `AutoLogicTask`
-   - přebírá repeat ntfy notifikace (každých `NTFY_REPEAT_INTERVAL_MS`
-     = 5 min), čítá `ntfyCount`
-   - zrychlí svůj vlastní tick na 1 s (jinak idle 2 s)
-5. Reset přijde **fyzicky z panic-button node** (mimo tento ESP) jako
-   `/api/panic` s `type=panic_reset` → `activeAlarm.active = false`.
-6. `EmergencyTask` na to zareaguje: `vTaskResume()` na všechny tři
-   tasky, vrátí se do idle tiku.
+2. Handler nastaví `activeAlarm`, hned odešle **první** ntfy (`sendNtfyPanic`) a broadcastne stav.
+3. Frontend při `alarm.active` zobrazí fullscreen červený overlay.
+4. `EmergencyTask` při náběhu alarmu zavolá `vTaskSuspend()` na `WledPollTask`, `EspPollTask` a `AutoLogicTask`, přebírá opakování ntfy (`NTFY_REPEAT_INTERVAL_MS`, 5 min, čítá `ntfyCount`) a zrychlí tick na 1 s.
+5. Reset přijde z panic-button node jako `/api/panic` s `type=panic_reset` → `active=false` → `EmergencyTask` všechny tři tasky `vTaskResume()`.
 
-### Co zůstává funkční během emergency
+**Co běží dál:** web server + websocket (vlastní AsyncTCP kontext), `loop()`, a také `WeatherTask`, `ClimateTask` a `NtfyCmdTask` (ty se nepozastavují). Hodinový report se během alarmu přeskakuje (DHT se čte dál), ntfy příkazy a health check desktopu běží normálně.
 
-- **Web server běží dál** (AsyncWebServer/AsyncTCP má vlastní
-  kontext, není to žádný z výše suspendovaných tasků) → `/api/status`,
-  `/api/panic` (reset), websocket – vše live.
-- Hlavní `loop()` (tlačítka, heartbeat, websocket cleanup) běží dál.
+**Co je pozastavené:** WLED/ESP polling (dashboard ukazuje poslední známý stav) a svátková hláška. Pokud alarm padne do okna 00:01–00:15, hláška se odešle po resolvnutí, dokud okno trvá.
 
-### Co je suspendnuté
+* * *
 
-- WLED/ESP polling → dashboard během emergency ukazuje **stale data**
-  pro tyto zařízení (poslední známý stav před alarmem). To je
-  záměr – jakmile emergency skončí, polling se obnoví a data se
-  doplní během pár sekund.
-- Denní svátková hláška – pokud by emergency padla přesně do
-  00:01–00:15 okna, hláška se odešle až po resolvnutí (při dalším
-  běhu `AutoLogicTask`u v rámci stejné minuty/okna, pokud okno ještě
-  trvá).
+## Datové toky
 
----
+### Websocket / JSON
 
-## Datový tok / JSON přes websocket
+`buildDashboardJson(true)` (`{"type":"devices", ...}`) se broadcastuje při connectu klienta, po každém pollu (WLED, ESP, počasí, klima), při změně stavu desktopu, každých 10 s z heartbeatu a po akcích z handlerů.
 
-`buildDashboardJson(true)` se posílá:
-- při connectu nového websocket klienta
-- po každém pollu zařízení (`WledPollTask`, `EspPollTask`)
-- po `AutoLogicTask` akci, manual sendu, diag, panic eventu, WLED
-  ovládání
-
-Struktura (`{"type":"devices", ...}`):
-
-```jsonc
+```
 {
   "type": "devices",
   "devices": [ /* wledPokoj, mcEsp, panicNode */ ],
-  "alarm": { "active": false, "eventId": "...", ... },
-  "system": {
-    "ip": "...", "wifiStatus": "connected", "heap": 123456,
-    "netReady": true, "timeReady": true, "fatalError": false,
-    "needsUserAttention": false,
-    "currentFullDate": "2026-06-13", "currentNames": "Antonín",
-    "lastSent": "2026-06-13", ...
-  }
+  "alarm":   { "active", "eventId", "deviceId", "deviceName", "receivedAtMs", "acked", "type" },
+  "system":  { "ip", "mdns", "gateway", "subnet", "dns", "wifiStatus", "rssi", "heap", "uptimeMs",
+               "netReady", "timeReady", "logicDone", "fatalError", "needsUserAttention",
+               "autoSendDone", "lastSendOk", "currentDateKey", "currentFullDate", "currentNames",
+               "lastSent", "resetReason", "bootCount",
+               "ntfyReport": { "code", "ageS" } },
+  "weather": { "valid", "temp", "apparentTemp", "windSpeed", "code", "condition", "icon",
+               "sunrise", "sunset", "sunriseMin", "sunsetMin", "moonPhase", "moonEmoji", "moonName",
+               "updatedAtMs", "forecast": [ { "hour", "temp", "code", "icon", "date" } ] },
+  "climate": { "indoor": {...}, "outdoor": { "valid", "temp", "hum", "updatedAtMs", "ageS", "trend", "trendMin" } },
+  "desktop": { "known", "online", "ip", "checkAgeS", "wolAgeS" }
 }
 ```
 
----
+Poznámky: `alarm.receivedAtMs` je ve skutečnosti epoch v sekundách (`mktime`), 0 když není čas. `ntfyReport.code`: 200 = OK, 0 = zatím neodesláno, -100 = WiFi, -101 = `http.begin` selhal, ostatní záporné = chyba HTTPClientu. Forecast se do JSON ořezává na 48 hodin.
+
+### Klima (`sensors.cpp`)
+
+DHT11 indoor na GPIO 5, DHT22 outdoor na GPIO 4, čtení každou minutu. Měření je `valid`, dokud po sobě neselže `CLIMATE_MAX_FAILS` (3) čtení. Trend = rozdíl proti nejstaršímu vzorku v okně (kruhový buffer 60 minutových vzorků, jen v RAM), ukazuje se až od 30 vzorků (`trendMin` = délka okna, 0 = málo dat). Frontend označí data starší než 180 s jako stará.
+
+### Počasí a měsíc (`weather.cpp`)
+
+Open-Meteo (`current` + `hourly` + `daily` sunrise/sunset, `forecast_days=2`, `Europe/Prague`, souřadnice z `config.h`). Fáze měsíce se počítá lokálně z Julian Date (synodický měsíc 29,530588853 d), výsledek je lunární den 0–29. Frontend si navíc sám dopočítává countdown na další nov/úplněk.
+
+### Hodinový ntfy report
+
+`ClimateTask` posílá report na `NTFY_REPORT_TOPIC` jednou za hodinu v minutách :00–:02 podle reálného času (NTP), ne podle `millis()`, a čekání zkracuje tak, aby vstal těsně po celé hodině. Obsah: Venku/Uvnitř (teplota, vlhkost), počasí (teplota, pocitová, stav, vítr), východ/západ, fáze měsíce, uptime + reset reason + boot #, a při venkovní teplotě ≤ 1,0 °C řádek „POZOR, ZIMA“. Priorita `min` (tichý). Ruční test: `POST /api/ntfy-test`.
+
+### ntfy – témata
+
+| Topic (`config.h`)              | Obsah                                                                  |
+|---------------------------------|------------------------------------------------------------------------|
+| `NTFY_REPORT_TOPIC`             | hodinové reporty, Desktop ONLINE/OFFLINE                               |
+| `NTFY_CMD_TOPIC`                | příkaz `WOL` (case-insensitive) a potvrzení odeslání                   |
+| SOS topic (natvrdo v `ntfy.cpp`) | SOS + opakování při aktivním alarmu, priorita `urgent`                |
+
+`ntfyCmdPoll()` startuje od času spuštění (staré zprávy ignoruje, čeká na NTP), pak posouvá okno přes `id` poslední zprávy a zpracovává jen události typu `message`.
+
+### Desktop: WOL a health check
+
+- **Health check:** TCP connect na RDP (3389) nebo SMB (445) s timeoutem 1 s. Online se projeví hned, offline až po 2 neúspěších po sobě. ntfy ONLINE/OFFLINE jde jen při změně (ne při první kontrole).
+- **WOL:** magic packet přes UDP broadcast (porty 9 a 7). Spouští se příkazem `WOL` na `NTFY_CMD_TOPIC` nebo `POST /api/wol`. Po odeslání se `DESKTOP_WAKE_WINDOW_MS` (180 s) kontroluje každé 3 s místo 15 s a UI ukazuje „probouzím“.
+
+### Svátky
+
+- `data/names.json`: objekt `"MM-DD" → [jména]` (víc jmen na den).
+- **Auto-odeslání:** `AutoLogicTask` každou minutu; v okně `AUTO_SEND_HOUR:AUTO_SEND_START_MIN` + `AUTO_SEND_WINDOW_MIN` (00:01–00:15), pokud `last_sent` ≠ dnešní datum, pošle „Dnes ma svatek: …“ na Discord webhook s role mention a zapíše `/state.json`. Při selhání zkouší znovu každou minutu do konce okna.
+- **Ruční odeslání:** `POST /api/send` nebo tlačítko SEND.
+- **Sledované svátky:** UI ukládá seznam jmen přes `POST /api/watch` do `/watch.json` (max 30 jmen, každé ≤ 30 znaků). Párování se jmény a výpočet následujících 7 dní (dnes + 6) dělá výhradně frontend z `names.json`.
+
+* * *
+
+## Endpointy
+
+Statické soubory: `serveStatic("/", LittleFS, "/")` s `index.html` jako default (tedy i `/names.json`, `/watch.json`, `/state.json`). WebSocket na `/ws`.
+
+⚠ = handler dělá blokující síťovou operaci přímo v `async_tcp` kontextu (viz [limity](#známé-limity)).
+
+| Endpoint                                        | Metoda | Co dělá                                                                       |
+|-------------------------------------------------|--------|-------------------------------------------------------------------------------|
+| `/api/status`, `/api/devices`                   | GET    | snapshot `buildDashboardJson`                                                 |
+| `/api/diagnostics`                              | GET    | diagnostika do Serialu + snapshot                                             |
+| `/api/refresh`                                  | POST   | neblokující: vzbudí WLED/ESP/weather/climate tasky, vrací 202                 |
+| `/api/ntfy-test`                                | POST   | neblokující: zařadí hodinový report, vrací 202                                |
+| `/api/wol`                                      | POST   | pošle magic packet (UDP, rychlé)                                              |
+| `/api/watch?names=A,B`                          | POST   | uloží sledovaná jména do `/watch.json`                                        |
+| `/api/panic` ⚠                                  | POST   | JSON `type` = `panic` / `panic_reset`, vrací ack `espdash.ack.v1`             |
+| `/api/send` ⚠                                   | POST   | ruční odeslání svátku na Discord                                              |
+| `/api/update-time` ⚠                            | POST   | vynutí NTP/čas refresh                                                        |
+| `/api/reset-last-sent`                          | POST   | vynuluje `last_sent` (testování auto-sendu)                                   |
+| `/api/wled/{toggle,on,off,brightness,identify}` ⚠ | POST | ovládání WLED (`brightness` bere `value` jako query/form)                     |
+
+* * *
+
+## Frontend (`data/`)
+
+Jedna stránka (`index.html` + `app.js` + `style.css`), data přijímá přes websocket (po odpojení reconnect po 2 s) a jako zálohu dotahuje `GET /api/status` každých 5 s. Sekce: hodiny + dnešní jména, karty klimatu (trend, stará data, „Pozor, zima“ při venku ≤ 1,0 °C), počasí + hodinová předpověď, karta měsíce, karta desktopu (stav + tlačítko WOL), karty zařízení (WLED ovládání, odkazy na zařízení), stat karty (IP, heap, WS), sbalitelné sekce Svátek a Sledované svátky, fullscreen alarm overlay.
+
+**Access mode (Local / Remote):** při prvním načtení se vybírá a pamatuje v `localStorage` (`dashAccessMode`). Local otevírá zařízení přes `*.local`, Remote přes ZeroTier IP a porty z `DEVICE_ACCESS` v `app.js` (WLED 7070, MC 9090). Dashboard samotný je přes remote na portu 8080.
+
+## Vzdálený přístup
+
+`remote_setup.bat` (admin, Windows s ZeroTier adaptérem) nastaví `netsh portproxy` + firewall pravidla: 8080 → dashboard, 7070 → WLED, 9090 → MC ESP (vše na port 80 cíle). `remote_teardown.bat` je vrátí zpět. ZeroTier IP je duplicitně v `remote_setup.bat` a `REMOTE_BASE_IP` v `app.js`.
+
+* * *
 
 ## LED stavy
 
-| Barva | Význam |
-|---|---|
-| 🟢 Zelená | vše OK |
-| 🔵 Modrá | `needsUserAttention` – něco čeká na ruční zásah (failed send, NTP fail, FS error...) |
-| 🔴 Červená | `fatalError` – LittleFS mount fail nebo WiFi timeout při bootu |
+| Barva     | Význam                                                                                    |
+|-----------|-------------------------------------------------------------------------------------------|
+| 🟢 Zelená  | vše OK                                                                                    |
+| 🔵 Modrá   | `needsUserAttention` – něco čeká na zásah (failed send, NTP fail, FS error při čtení jmen…) |
+| 🔴 Červená | `fatalError` – LittleFS mount fail nebo WiFi timeout při bootu                            |
 
----
+Priorita: červená > modrá > zelená. Pin podle `PIN_NEOPIXEL` z Arduino core (fallback 48).
 
-## Endpointy (`/api/*`)
+* * *
 
-| Endpoint | Metoda | Co dělá |
-|---|---|---|
-| `/api/status`, `/api/devices` | GET | snapshot `buildDashboardJson` |
-| `/api/diagnostics` | GET | vypíše diagnostiku do Serial + snapshot |
-| `/api/refresh` | POST | force-poll všech zařízení |
-| `/api/panic` | POST | příjem panic / panic_reset eventu |
-| `/api/send` | POST | manuální odeslání svátkové hlášky |
-| `/api/update-time` | POST | force NTP refresh |
-| `/api/reset-last-sent` | POST | vynuluje `last_sent` (pro testování auto-send) |
-| `/api/wled/{toggle,on,off,brightness,identify}` | POST | ovládání WLED |
+## Konvence pro nový kód
 
----
+- Nový globální stav: skalár/řetězec → getter/setter v `state.h/.cpp`; struktura → vlastní mutex v `state.*`.
+- Nový periodický úkol: statický task (buffer + stack) v `tasks.cpp`, start v `startBackgroundTasks()`; TLS tasky mají 12–16 KB stack.
+- Nový endpoint s pomalou prací: handler jen nastaví flag a `xTaskNotifyGive()` na task, výsledek jde přes websocket (vzor `/api/refresh`, `/api/ntfy-test`).
+- Do `config.h` jen přidávat nové defines, hodnoty existujících neměnit.
 
-## Známé limity / co řešit ve V2
+## Záměrně není
 
-- WiFi credentials a Discord webhook natvrdo v `config.cpp` – OK pro
-  priv repo, ale při sdílení/refaktoru do veřejného repa přesunout do
-  `secrets.h` v `.gitignore`.
-- `MC_FALLBACK_IP` a `PANIC_NODE_FALLBACK_IP` jsou prázdné – pokud
-  mDNS selže a není cached IP, zařízení spadne do "offline" bez
-  fallbacku. Funguje to, jen to zmiňuju, ať víš proč se to někdy
-  ukáže offline po čerstvém bootu.
-- SolaX/heat pump/kamery a další V2 věci sem záměrně nepatří – tohle
-  zůstává čistě "network ops + svátky + panic" legacy panel.
+OTA, zabezpečení ntfy topicu, boot zpráva na ntfy, varování na vlhkost. Tlačítka jsou v kódu, ale nezapojená.
+
+* * *
+
+## Známé limity
+
+- **Credentials v repu:** WiFi heslo, Discord webhook a role ID jsou natvrdo v `src/config.cpp`. Repo je veřejné, takže to chce přesunout do `secrets.h` v `.gitignore` a hodnoty rotovat (zůstávají v historii gitu).
+- **Blokující handlery v `async_tcp`:** `/api/panic` (první ntfy, TLS), `/api/send` (Discord TLS), `/api/update-time` (`getLocalTime`, default 5 s), `/api/wled/*` (HTTP timeouty 1,5 s, po POST navíc `pollWLED()`; `identify` dělá dva POSTy + `delay(350)`). Porušuje pravidlo „v async handlerech neblokovat“ z HANDOFF a hrozí task WDT při pomalé síti. Správný vzor je `/api/refresh`.
+- **TLS bez ověření certifikátu:** všude `setInsecure()` (Discord, ntfy, Open-Meteo).
+- **Žádná autentizace:** všechny endpointy i celý LittleFS root jsou dostupné komukoli v síti / přes ZeroTier.
+- **Fallback IP prázdné:** `MC_FALLBACK_IP` a `PANIC_NODE_FALLBACK_IP`. Když mDNS selže a není cache, zařízení je offline (typicky po čerstvém bootu).
+- **Duplicitní konstanty:** práh mrazu 1,0 °C je natvrdo v `tasks.cpp` (report) i `app.js` (UI); SOS topic je natvrdo v `ntfy.cpp`; ZeroTier IP je v `app.js` i `remote_setup.bat`.
+- **Předpověď:** `WEATHER_FORECAST_HOURS` je 168, ale s `forecast_days=2` API vrací nejvýš 48 hodin a JSON ořezává na 48.
+- **Perzistence:** historie trendu je jen v RAM, `bootCounter` se nuluje při výpadku napájení.
+- **Otevřené:** jednorázový restart (interrupt watchdog, 2026-11-03), TFT sloučení a rozhodnutí o mobilním zrcadlení přes ntfy: viz HANDOFF.md.
+- SolaX, tepelné čerpadlo a kamery sem záměrně nepatří, jsou to samostatné projekty.
