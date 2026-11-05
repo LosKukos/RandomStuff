@@ -15,6 +15,7 @@
 #include "ntfy_cmd.h"
 #include "desktop.h"
 #include "web_server.h"
+#include "breadcrumbs.h"
 
 // =====================================================
 // ISR / BUTTON FLAGS
@@ -97,9 +98,12 @@ static void wledPollTask(void *pv) {
   logLine(F("[TASK][WLED] started"));
   for (;;) {
     if (getNetReady()) {
+      bcMark(BT_WLED, BS_WLED_POLL);
       pollWLED();
+      bcMark(BT_WLED, BS_BROADCAST);
       broadcastDashboard();
     }
+    bcMark(BT_WLED, BS_IDLE);
     ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(DEVICE_POLL_INTERVAL_MS));   // budi i requestRefreshAll()
   }
 }
@@ -112,10 +116,14 @@ static void espPollTask(void *pv) {
   logLine(F("[TASK][ESP] started"));
   for (;;) {
     if (getNetReady()) {
+      bcMark(BT_ESP, BS_ESP_POLL_MC);
       pollCustomEsp(mcEsp,     MC_HOST,         MC_FALLBACK_IP,         MC_STATUS_ENDPOINT);
+      bcMark(BT_ESP, BS_ESP_POLL_PANIC);
       pollCustomEsp(panicNode, PANIC_NODE_HOST, PANIC_NODE_FALLBACK_IP, PANIC_NODE_STATUS_ENDPOINT);
+      bcMark(BT_ESP, BS_BROADCAST);
       broadcastDashboard();
     }
+    bcMark(BT_ESP, BS_IDLE);
     ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(DEVICE_POLL_INTERVAL_MS));
   }
 }
@@ -136,6 +144,7 @@ static void runAutoSendLogic() {
 
   if (shouldAutoSend()) {
     logLine(F("[AUTO] conditions met"));
+    bcMark(BT_AUTO, BS_DISCORD);
     bool ok = sendMessage("Dnes ma svatek: " + getCurrentNames());
     setLastSendOk(ok);
     if (ok) {
@@ -158,7 +167,9 @@ static void runAutoSendLogic() {
 static void autoLogicTask(void *pv) {
   logLine(F("[TASK][AUTO] started"));
   for (;;) {
+    bcMark(BT_AUTO, BS_AUTO_LOGIC);
     runAutoSendLogic();
+    bcMark(BT_AUTO, BS_IDLE);
     vTaskDelay(pdMS_TO_TICKS(60000));
   }
 }
@@ -193,6 +204,8 @@ static void emergencyTask(void *pv) {
       unlockMutex(alarmMutex);
     }
 
+    if (active != wasActive) bcMark(BT_EMERG, BS_EMERG_CHANGE);
+
     if (active && !wasActive) {
       logLine(F("[EMERGENCY] activated - suspending background tasks"));
       if (wledPollTaskHandle)   vTaskSuspend(wledPollTaskHandle);
@@ -208,6 +221,7 @@ static void emergencyTask(void *pv) {
     }
 
     if (active && millis() - lastAt >= NTFY_REPEAT_INTERVAL_MS) {
+      bcMark(BT_EMERG, BS_NTFY_PANIC);
       sendNtfyPanic(devName, evId, count);
       if (lockMutex(alarmMutex)) {
         activeAlarm.lastNtfyAt = millis();
@@ -230,8 +244,13 @@ static void weatherTask(void *pv) {
   logLine(F("[TASK][WEATHER] started"));
   for (;;) {
     if (getNetReady()) {
-      if (pollWeather()) broadcastDashboard();
+      bcMark(BT_WEATHER, BS_WEATHER_POLL);
+      if (pollWeather()) {
+        bcMark(BT_WEATHER, BS_BROADCAST);
+        broadcastDashboard();
+      }
     }
+    bcMark(BT_WEATHER, BS_IDLE);
     ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(WEATHER_POLL_INTERVAL_MS));
   }
 }
@@ -250,6 +269,7 @@ static String fmtSensor(const char *label, const DhtReading &r) {
 
 // hodinovy report na ntfy: teploty + pocasi + mesic
 static void sendHourlyReport() {
+  bcMark(BT_CLIMATE, BS_NTFY_REPORT);
   DhtReading in, out;
   if (lockMutex(climateMutex)) { in = climate.indoor; out = climate.outdoor; unlockMutex(climateMutex); }
 
@@ -268,6 +288,10 @@ static void sendHourlyReport() {
   uint32_t upS = millis() / 1000;
   body += "\nUptime: " + String(upS / 3600) + " h " + String((upS % 3600) / 60) + " min, restart: " + resetReasonStr() +
           " (boot #" + String((unsigned long)bootCounter) + ")";
+  body += "\n" + bcHeapLine();
+
+  // po padu (WDT / panic / brownout) pridat souhrn z RTC breadcrumbs do prvnich reportu
+  if (bcPrevAbnormal() && upS < BC_REPORT_PREV_SECS) body += "\n\n" + bcPrevSummary();
 
   if (out.valid && out.temp <= 1.0f) body += "\n\nPOZOR, ZIMA (venku " + String(out.temp, 1) + " C)";
 
@@ -290,7 +314,11 @@ static void climateTask(void *pv) {
   int lastReportKey = -1;   // den_v_roce*24 + hodina posledniho odeslaneho reportu
 
   for (;;) {
-    if (pollClimate()) broadcastDashboard();
+    bcMark(BT_CLIMATE, BS_CLIMATE_READ);
+    if (pollClimate()) {
+      bcMark(BT_CLIMATE, BS_BROADCAST);
+      broadcastDashboard();
+    }
 
     if (ntfyTestRequested) {
       ntfyTestRequested = false;
@@ -303,6 +331,7 @@ static void climateTask(void *pv) {
     if (getNetReady() && wallClock(t)) {
       int key = t.tm_yday * 24 + t.tm_hour;
       if (t.tm_min < 3 && key != lastReportKey) {
+        bcHourlySample();   // hodinovy vzorek heapu do RTC (trend / uniky), i pri alarmu
         bool alarm = false;
         if (lockMutex(alarmMutex)) { alarm = activeAlarm.active; unlockMutex(alarmMutex); }
         if (!alarm) sendHourlyReport();
@@ -314,6 +343,7 @@ static void climateTask(void *pv) {
       if (msToHour < waitMs) waitMs = msToHour;
     }
 
+    bcMark(BT_CLIMATE, BS_IDLE);
     ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(waitMs));
   }
 }
@@ -336,12 +366,16 @@ static void ntfyCmdTask(void *pv) {
       const uint32_t deskEvery = desktopWakeWindowActive() ? DESKTOP_CHECK_FAST_MS : DESKTOP_CHECK_INTERVAL_MS;
 
       if (now - lastDesktop >= deskEvery || lastDesktop == 0) {
+        bcMark(BT_NTFYCMD, BS_DESKTOP_POLL);
         desktopPoll();
         lastDesktop = millis();
+        bcMark(BT_NTFYCMD, BS_IDLE);
       }
       if (millis() - lastNtfy >= NTFY_CMD_POLL_INTERVAL_MS || lastNtfy == 0) {
+        bcMark(BT_NTFYCMD, BS_NTFYCMD_POLL);
         ntfyCmdPoll();
         lastNtfy = millis();
+        bcMark(BT_NTFYCMD, BS_IDLE);
       }
     }
     vTaskDelay(pdMS_TO_TICKS(1000));
@@ -360,6 +394,19 @@ void requestRefreshAll() {
   if (espPollTaskHandle)  xTaskNotifyGive(espPollTaskHandle);
   if (weatherTaskHandle)  xTaskNotifyGive(weatherTaskHandle);
   if (climateTaskHandle)  xTaskNotifyGive(climateTaskHandle);
+}
+
+// volny stack tasku v bajtech (ESP-IDF vraci high-water mark v bajtech), pro RTC breadcrumbs.
+// Poradi: wled, esp, auto, emergency, weather, climate, ntfycmd
+void getTaskStackFree(uint16_t out[7]) {
+  TaskHandle_t h[7] = {
+    wledPollTaskHandle, espPollTaskHandle, autoLogicTaskHandle, emergencyTaskHandle,
+    weatherTaskHandle, climateTaskHandle, ntfyCmdTaskHandle
+  };
+  for (int i = 0; i < 7; i++) {
+    const UBaseType_t w = h[i] ? uxTaskGetStackHighWaterMark(h[i]) : 0;
+    out[i] = w > 65535 ? 65535 : (uint16_t)w;
+  }
 }
 
 // vzbudi climate task, ktery hned posle report na ntfy (test)

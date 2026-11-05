@@ -25,3 +25,7 @@ void requestRefreshAll();
 
 // neblokujici: posle hodinovy report na ntfy hned (test), vysledek je v /api/status
 void requestNtfyTest();
+
+// volny stack (v bajtech, high-water mark) tasku v poradi:
+// wled, esp, auto, emergency, weather, climate, ntfycmd (7 hodnot). Pro RTC breadcrumbs.
+void getTaskStackFree(uint16_t out[7]);

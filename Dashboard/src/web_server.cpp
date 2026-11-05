@@ -14,6 +14,7 @@
 #include "sensors.h"
 #include "tasks.h"
 #include "ntfy.h"
+#include "breadcrumbs.h"
 
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
@@ -100,6 +101,8 @@ String buildDashboardJson(bool wsWrap) {
   sys["lastSent"]        = getLastSent();
   sys["resetReason"]     = resetReasonStr();
   sys["bootCount"]       = (uint32_t)bootCounter;
+  sys["minHeap"]         = bcMinHeap();      // nejnizsi volny internal heap od startu
+  sys["maxBlock"]        = bcMaxBlock();     // nejvetsi souvisly volny blok (fragmentace)
 
   {
     JsonObject n = sys["ntfyReport"].to<JsonObject>();
@@ -228,6 +231,13 @@ void startDashboardServer() {
     request->send(200, "application/json", buildDashboardJson(false));
   });
 
+  // RTC breadcrumbs: co ESP delalo pred poslednim restartem + aktualni heap/stacky
+  server.on("/api/crash", HTTP_GET, [](AsyncWebServerRequest *request) {
+    JsonDocument doc;
+    bcFillJson(doc.to<JsonObject>());
+    sendJsonResponse(request, 200, doc);
+  });
+
   // Neblokujici: handler bezi v async_tcp tasku (watchdog ~5 s), takze jen
   // vzbudi poll tasky a hned vrati aktualni stav. Cerstva data dorazi
   // pres websocket, jakmile je tasky nactou.
@@ -286,6 +296,7 @@ void startDashboardServer() {
     nullptr,
     [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
 
+      bcMark(BT_WEB, BS_H_PANIC);
       JsonDocument doc;
       if (deserializeJson(doc, data, len)) {
         request->send(400, "application/json", "{\"ok\":false,\"message\":\"parse error\"}");
@@ -325,6 +336,7 @@ void startDashboardServer() {
 
       // ntfy jde hned jen pri prvnim prijeti — repeat resi emergencyTask
       if (firstTrigger) {
+        bcMark(BT_WEB, BS_NTFY_PANIC);
         sendNtfyPanic(devName, eventId, 0);
       }
 
@@ -342,6 +354,7 @@ void startDashboardServer() {
   );
 
   server.on("/api/send", HTTP_POST, [](AsyncWebServerRequest *request) {
+    bcMark(BT_WEB, BS_H_SEND);
     bool ok = doManualSend();
     broadcastDashboard();
     JsonDocument doc;
@@ -354,6 +367,7 @@ void startDashboardServer() {
   });
 
   server.on("/api/update-time", HTTP_POST, [](AsyncWebServerRequest *request) {
+    bcMark(BT_WEB, BS_H_TIME);
     bool ok = updateLocalTime();
     if (ok) setTimeReady(true);
     broadcastDashboard();

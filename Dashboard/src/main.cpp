@@ -12,6 +12,7 @@
 #include "diagnostics.h"
 #include "web_server.h"
 #include "tasks.h"
+#include "breadcrumbs.h"
 
 unsigned long lastHeartbeat = 0;
 
@@ -25,7 +26,11 @@ void setup() {
 
   initMutexes();
 
-  bootCounter++;
+  // RTC breadcrumbs: nacte zaznamy z predchoziho behu a vynuluje RTC pro tento beh.
+  // Pocitadlo startu bere z RTC_NOINIT (RTC_DATA_ATTR se pri WDT resetu nemusi zachovat).
+  bcInit();
+  bootCounter = bcBootCount();
+  bcMark(BT_SETUP, BS_START);
 
   initLed();
 
@@ -42,6 +47,7 @@ void setup() {
   logLine(F("[BOOT] ESP32 dashboard starting"));
   logValue(F("[BOOT] Boot count: "), (unsigned long)bootCounter);
   printDivider();
+  bcPrintPrev();   // co se dělo před předchozím restartem (WDT / panic / ...)
 
   if (!LittleFS.begin(true)) {
     logLine(F("[FS] LittleFS mount failed"));
@@ -51,6 +57,7 @@ void setup() {
   }
   logLine(F("[FS] LittleFS mounted"));
 
+  bcMark(BT_SETUP, BS_SETUP_WIFI);
   scanWifi();
 
   if (!connectWiFi()) {
@@ -69,6 +76,7 @@ void setup() {
   }
 
   if (getNetReady()) {
+    bcMark(BT_SETUP, BS_SETUP_NTP);
     setupTime();
     setLastSent(loadLastSentFile());
     logValue(F("[STATE] lastSent="), getLastSent());
@@ -81,6 +89,7 @@ void setup() {
   startBackgroundTasks();
 
   broadcastDashboard();
+  bcMark(BT_SETUP, BS_SETUP_DONE);
   logLine(F("[BOOT] setup finished"));
 }
 
@@ -95,11 +104,13 @@ void loop() {
   ws.cleanupClients();
 
   if (fetchAndClearSendRequested()) {
+    bcMark(BT_LOOP, BS_BUTTONS);
     doManualSend();
     broadcastDashboard();
   }
 
   if (fetchAndClearDiagRequested()) {
+    bcMark(BT_LOOP, BS_BUTTONS);
     doDiagnostics();
     broadcastDashboard();
   }
@@ -107,6 +118,7 @@ void loop() {
   if (millis() - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
     lastHeartbeat = millis();
     heartbeat();
+    bcHeartbeat();   // snapshot heap/stacky do RTC (+ krok "heartbeat")
     broadcastDashboard();
   }
 

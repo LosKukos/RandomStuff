@@ -6,6 +6,7 @@
 #include "config.h"
 #include "log_util.h"
 #include "web_server.h"
+#include "breadcrumbs.h"
 
 // =====================================================
 // mDNS
@@ -127,6 +128,7 @@ static bool wledPostJson(const String &payload) {
   String ip = resolveWledAddress();
   if (ip.isEmpty()) return false;
 
+  bcMark(BT_WEB, BS_H_WLED);   // volano jen z async_tcp handleru /api/wled/*
   HTTPClient http;
   http.setTimeout(1500);
   if (!http.begin("http://" + ip + "/json/state")) { setWledOffline("POST begin failed"); return false; }
