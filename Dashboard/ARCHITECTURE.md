@@ -2,7 +2,7 @@
 
 Domácí dashboard na ESP32-S3: network-ops panel (WLED, Minecraft controller, panic-button), denní svátková hláška na Discord, SOS/panic alarm, klima (DHT11/DHT22), počasí + měsíc, hodinový report na ntfy a Wake-on-LAN + health check desktopu.
 
-Stav k 2026-11-04. Aktuální rozpracované věci a pravidla pro práci jsou v [HANDOFF.md](HANDOFF.md), tento dokument popisuje strukturu kódu.
+Stav k 2026-11-05. Aktuální rozpracované věci a pravidla pro práci jsou v [HANDOFF.md](HANDOFF.md), tento dokument popisuje strukturu kódu.
 
 * * *
 
@@ -37,6 +37,7 @@ Za běhu vznikají na LittleFS ještě `/state.json` (`last_sent`) a `/watch.jso
 | `config.h/.cpp`      | Defines (piny, intervaly, hosty, topicy, souřadnice) v `.h`; WiFi, Discord webhook a role ID jako konstanty v `.cpp`.                    |
 | `state.h/.cpp`       | Mutexy, boot counter (RTC), flagy s get/set, struktury `DeviceState`, `AlarmState`, `WeatherState`, `ClimateState`, `DesktopState`.      |
 | `log_util.h/.cpp`    | `logLine`/`logValue`/`printDivider` – Serial výstup chráněný `serialMutex`.                                                              |
+| `breadcrumbs.h/.cpp` | RTC breadcrumbs: `bcMark()` kroky tasků, heap/stack snapshot, hodinový vzorek heapu, souhrn předchozího běhu (viz [RTC breadcrumbs](#rtc-breadcrumbs)). |
 | `led.h/.cpp`         | Onboard NeoPixel: stavová LED (viz [LED stavy](#led-stavy)).                                                                             |
 | `wifi_setup.h/.cpp`  | `scanWifi()`, `connectWiFi()` (timeout `WIFI_TIMEOUT_MS`).                                                                               |
 | `devices.h/.cpp`     | mDNS (`dash.local`), resolve s cache/fallbackem, polling WLED a vlastních ESP (mc, panic-button), ovládání WLED.                         |
@@ -57,7 +58,7 @@ Za běhu vznikají na LittleFS ještě `/state.json` (`last_sent`) a `/watch.jso
 
 ## Boot (`setup()`)
 
-1. Serial, `initMutexes()`, `bootCounter++` (`RTC_DATA_ATTR` – přežije soft reset a deep sleep, ne výpadek napájení), LED, tlačítka (GPIO 16 SEND / 17 DIAG, `INPUT_PULLUP`, přerušení na FALLING).
+1. Serial, `initMutexes()`, `bcInit()` (načte breadcrumbs z předchozího běhu a vynuluje RTC pro tento běh), `bootCounter = bcBootCount()` (počítadlo startů v `RTC_NOINIT`, přežije soft reset i WDT, ne výpadek napájení), LED, tlačítka (GPIO 16 SEND / 17 DIAG, `INPUT_PULLUP`, přerušení na FALLING). Po výpisu boot informací `bcPrintPrev()` vypíše souhrn předchozího běhu.
 2. Mount LittleFS. Při selhání: `fatalError`, červená LED a `setup()` skončí – bez WiFi, serveru i tasků.
 3. `scanWifi()` → `connectWiFi()`. Timeout nastaví `fatalError` a `netReady=false`.
 4. Pokud WiFi běží: mDNS (`dash.local`).
@@ -65,7 +66,7 @@ Za běhu vznikají na LittleFS ještě `/state.json` (`last_sent`) a `/watch.jso
 6. Pokud `netReady`: `setupTime()` (NTP, až 20 × 500 ms, TZ `CET-1CEST,M3.5.0/2,M10.5.0/3`) + načtení `last_sent`.
 7. `startBackgroundTasks()` (nejdřív `initSensors()`), první `broadcastDashboard()`.
 
-`loop()` (Arduino task, core 1) dělá jen: `ws.cleanupClients()`, zpracování tlačítek (SEND → `doManualSend`, DIAG → `doDiagnostics`), heartbeat log + broadcast každých 10 s, update LED, `delay(20)`. Tlačítka zatím nejsou fyzicky zapojená.
+`loop()` (Arduino task, core 1) dělá jen: `ws.cleanupClients()`, zpracování tlačítek (SEND → `doManualSend`, DIAG → `doDiagnostics`), heartbeat log + `bcHeartbeat()` + broadcast každých 10 s, update LED, `delay(20)`. Tlačítka zatím nejsou fyzicky zapojená.
 
 * * *
 
@@ -135,7 +136,7 @@ Cíl: po SOS z panic-buttonu omezit zbytečný provoz a držet se opakovaných n
   "system":  { "ip", "mdns", "gateway", "subnet", "dns", "wifiStatus", "rssi", "heap", "uptimeMs",
                "netReady", "timeReady", "logicDone", "fatalError", "needsUserAttention",
                "autoSendDone", "lastSendOk", "currentDateKey", "currentFullDate", "currentNames",
-               "lastSent", "resetReason", "bootCount",
+               "lastSent", "resetReason", "bootCount", "minHeap", "maxBlock",
                "ntfyReport": { "code", "ageS" } },
   "weather": { "valid", "temp", "apparentTemp", "windSpeed", "code", "condition", "icon",
                "sunrise", "sunset", "sunriseMin", "sunsetMin", "moonPhase", "moonEmoji", "moonName",
@@ -157,7 +158,7 @@ Open-Meteo (`current` + `hourly` + `daily` sunrise/sunset, `forecast_days=2`, `E
 
 ### Hodinový ntfy report
 
-`ClimateTask` posílá report na `NTFY_REPORT_TOPIC` jednou za hodinu v minutách :00–:02 podle reálného času (NTP), ne podle `millis()`, a čekání zkracuje tak, aby vstal těsně po celé hodině. Obsah: Venku/Uvnitř (teplota, vlhkost), počasí (teplota, pocitová, stav, vítr), východ/západ, fáze měsíce, uptime + reset reason + boot #, a při venkovní teplotě ≤ 1,0 °C řádek „POZOR, ZIMA“. Priorita `min` (tichý). Ruční test: `POST /api/ntfy-test`.
+`ClimateTask` posílá report na `NTFY_REPORT_TOPIC` jednou za hodinu v minutách :00–:02 podle reálného času (NTP), ne podle `millis()`, a čekání zkracuje tak, aby vstal těsně po celé hodině. Obsah: Venku/Uvnitř (teplota, vlhkost), počasí (teplota, pocitová, stav, vítr), východ/západ, fáze měsíce, uptime + reset reason + boot #, řádek `Heap: volný / min / max blok`, po abnormálním restartu (PANIC / WDT / BROWNOUT) prvních 3 h běhu souhrn z RTC breadcrumbs a při venkovní teplotě ≤ 1,0 °C řádek „POZOR, ZIMA“. Priorita `min` (tichý). Ruční test: `POST /api/ntfy-test`.
 
 ### ntfy – témata
 
@@ -173,6 +174,24 @@ Open-Meteo (`current` + `hourly` + `daily` sunrise/sunset, `forecast_days=2`, `E
 
 - **Health check:** TCP connect na RDP (3389) nebo SMB (445) s timeoutem 1 s. Online se projeví hned, offline až po 2 neúspěších po sobě. ntfy ONLINE/OFFLINE jde jen při změně (ne při první kontrole).
 - **WOL:** magic packet přes UDP broadcast (porty 9 a 7). Spouští se příkazem `WOL` na `NTFY_CMD_TOPIC` nebo `POST /api/wol`. Po odeslání se `DESKTOP_WAKE_WINDOW_MS` (180 s) kontroluje každé 3 s místo 15 s a UI ukazuje „probouzím“.
+
+### RTC breadcrumbs
+
+Diagnostika pádů (watchdog, panic, brownout). Data jsou v `RTC_NOINIT` paměti, takže přežijí tyto resety, ale ne výpadek napájení (po power-on se zahodí). Při každém startu `bcInit()` zkopíruje starý obsah do obyčejné RAM (`prev`) a RTC vynuluje.
+
+Co se zapisuje:
+- **`bcMark(task, step)`** – lock-free, volatelné z kteréhokoli tasku. Zapíše krok do ringu 48 záznamů (čas, task, krok, jádro) a jako „poslední krok“ daného tasku. Tasky ho volají kolem blokujících operací (poll WLED/ESP, Discord, weather, klima, ntfy report, ntfy příkazy, health check desktopu) a handlery `/api/panic`, `/api/send`, `/api/update-time` a WLED POST značí krok pod taskem `web`. Běžný stav je `idle`.
+- **`bcHeartbeat()`** (z `loop()` každých 10 s) – snapshot: uptime, volný internal heap, minimum od startu, největší souvislý blok, volná PSRAM, RSSI a volný stack všech 7 tasků i `loop`.
+- **`bcHourlySample()`** (z `ClimateTask` při hodinovém reportu) – vzorek heapu, drží se posledních 24.
+
+Kde se to čte po restartu:
+- Serial při bootu (`[BC] …`).
+- Hodinový ntfy report po abnormálním restartu (posledních 8 kroků, poslední krok každého tasku, stack a heap z posledního heartbeatu, heap po hodinách).
+- `GET /api/crash` → `{"prev": {…}, "now": {…}}` včetně celého ringu a hodinových vzorků.
+
+Jak to číst: pád v kroku `ntfy_report`, `discord` nebo `weather_poll` ukazuje na TLS, `h_panic` / `h_send` / `h_time` / `h_wled` na blokující handler v `async_tcp`. Klesající `min` heapu po hodinách značí únik paměti, malý `max blok` fragmentaci.
+
+Omezení: ring ukazuje, co se dělalo naposled, ne co přesně spadlo. Heartbeat je jen každých 10 s, takže stav těsně před pádem nemusí být přesný. Počítadlo zápisů je v obyčejné RAM, v RTC se jen udržuje nejvyšší hodnota. Souběžné zápisy z více tasků nejsou chráněné (benigní race, záznam může být občas přepsaný).
 
 ### Svátky
 
@@ -193,6 +212,7 @@ Statické soubory: `serveStatic("/", LittleFS, "/")` s `index.html` jako default
 |-------------------------------------------------|--------|-------------------------------------------------------------------------------|
 | `/api/status`, `/api/devices`                   | GET    | snapshot `buildDashboardJson`                                                 |
 | `/api/diagnostics`                              | GET    | diagnostika do Serialu + snapshot                                             |
+| `/api/crash`                                    | GET    | RTC breadcrumbs: předchozí běh (kroky, heap, stacky) + aktuální heap          |
 | `/api/refresh`                                  | POST   | neblokující: vzbudí WLED/ESP/weather/climate tasky, vrací 202                 |
 | `/api/ntfy-test`                                | POST   | neblokující: zařadí hodinový report, vrací 202                                |
 | `/api/wol`                                      | POST   | pošle magic packet (UDP, rychlé)                                              |
@@ -251,6 +271,7 @@ OTA, zabezpečení ntfy topicu, boot zpráva na ntfy, varování na vlhkost. Tla
 - **Fallback IP prázdné:** `MC_FALLBACK_IP` a `PANIC_NODE_FALLBACK_IP`. Když mDNS selže a není cache, zařízení je offline (typicky po čerstvém bootu).
 - **Duplicitní konstanty:** práh mrazu 1,0 °C je natvrdo v `tasks.cpp` (report) i `app.js` (UI); SOS topic je natvrdo v `ntfy.cpp`; ZeroTier IP je v `app.js` i `remote_setup.bat`.
 - **Předpověď:** `WEATHER_FORECAST_HOURS` je 168, ale s `forecast_days=2` API vrací nejvýš 48 hodin a JSON ořezává na 48.
-- **Perzistence:** historie trendu je jen v RAM, `bootCounter` se nuluje při výpadku napájení.
-- **Otevřené:** jednorázový restart (interrupt watchdog, 2026-11-03), TFT sloučení a rozhodnutí o mobilním zrcadlení přes ntfy: viz HANDOFF.md.
+- **Perzistence:** historie trendu je jen v RAM, `bootCounter` i breadcrumbs se nulují při výpadku napájení.
+- **Breadcrumbs nejsou ověřené na desce:** modul prošel jen syntax-checkem na stubech, nebyl zkompilovaný v PlatformIO ani nahraný.
+- **Otevřené:** opakované restarty kvůli watchdogu (2026-11-03 a znovu po cca 10 h), TFT sloučení, rozhodnutí o mobilním zrcadlení přes ntfy a úprava vzhledu UI: viz HANDOFF.md.
 - SolaX, tepelné čerpadlo a kamery sem záměrně nepatří, jsou to samostatné projekty.
