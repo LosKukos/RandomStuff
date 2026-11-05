@@ -7,10 +7,32 @@
 static DHT dhtIndoor(PIN_DHT_INDOOR,  DHT11);
 static DHT dhtOutdoor(PIN_DHT_OUTDOOR, DHT22);
 
+static bool hasOutdoorPwrPin() { return PIN_DHT_OUTDOOR_PWR >= 0; }
+
 void initSensors() {
+  if (hasOutdoorPwrPin()) {
+    pinMode(PIN_DHT_OUTDOOR_PWR, OUTPUT);
+    digitalWrite(PIN_DHT_OUTDOOR_PWR, HIGH);
+    delay(DHT_PWR_SETTLE_MS);   // nechat senzor nabehnout, setup() jeste nebezi v tasku
+  }
   dhtIndoor.begin();
   dhtOutdoor.begin();
   logLine(F("[SENSORS] DHT11 (indoor) + DHT22 (outdoor) init"));
+  if (hasOutdoorPwrPin()) logValue(F("[SENSORS] outdoor DHT22 power pin: GPIO "), PIN_DHT_OUTDOOR_PWR);
+}
+
+// Vypne a zapne napajeni venkovniho DHT22 (blokuje ~4 s, volat jen z ClimateTask).
+// Pred vypnutim zaloguje stav datoveho pinu: LOW = zaseknuty senzor nebo zkrat,
+// HIGH = linka volna (pull-up), senzor jen neodpovida.
+static void powerCycleOutdoor() {
+  const int level = digitalRead(PIN_DHT_OUTDOOR);
+  logLine(String("[SENSORS] outdoor power-cycle, data pin = ") + (level ? "HIGH" : "LOW"));
+
+  digitalWrite(PIN_DHT_OUTDOOR_PWR, LOW);
+  vTaskDelay(pdMS_TO_TICKS(DHT_PWR_OFF_MS));
+  digitalWrite(PIN_DHT_OUTDOOR_PWR, HIGH);
+  vTaskDelay(pdMS_TO_TICKS(DHT_PWR_SETTLE_MS));
+  dhtOutdoor.begin();   // znovu nastavi pin a vynuluje interval cteni knihovny
 }
 
 // kruhovy buffer minutovych vzorku teploty pro vypocet trendu
@@ -64,5 +86,28 @@ static bool readInto(DHT &dht, DhtReading &r, TempHistory &hist, const char *lab
 bool pollClimate() {
   bool a = readInto(dhtIndoor,  climate.indoor,  histIndoor,  "indoor");
   bool b = readInto(dhtOutdoor, climate.outdoor, histOutdoor, "outdoor");
+
+  // Venkovni senzor se zasekl? Zkusit automaticky "odpojit/pripojit" (s cooldownem).
+  if (!b && hasOutdoorPwrPin()) {
+    int fails = 0;
+    uint32_t lastCycle = 0;
+    if (lockMutex(climateMutex)) {
+      fails = climate.outdoor.fails;
+      lastCycle = climate.outdoor.lastCycleMs;
+      unlockMutex(climateMutex);
+    }
+    const bool cooldownOk = (lastCycle == 0) || (millis() - lastCycle >= DHT_POWER_CYCLE_COOLDOWN_MS);
+    if (fails >= DHT_POWER_CYCLE_FAILS && cooldownOk) {
+      powerCycleOutdoor();
+      if (lockMutex(climateMutex)) {
+        climate.outdoor.pwrCycles++;
+        climate.outdoor.lastCycleMs = millis();
+        unlockMutex(climateMutex);
+      }
+      b = readInto(dhtOutdoor, climate.outdoor, histOutdoor, "outdoor (po power-cyclu)");
+      logLine(b ? F("[SENSORS] outdoor DHT22 po power-cyclu OK")
+                : F("[SENSORS] outdoor DHT22 po power-cyclu porad nic"));
+    }
+  }
   return a || b;
 }

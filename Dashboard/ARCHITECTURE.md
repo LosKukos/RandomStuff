@@ -152,6 +152,8 @@ Poznámky: `alarm.receivedAtMs` je ve skutečnosti epoch v sekundách (`mktime`)
 
 DHT11 indoor na GPIO 5, DHT22 outdoor na GPIO 4, čtení každou minutu. Měření je `valid`, dokud po sobě neselže `CLIMATE_MAX_FAILS` (3) čtení. Trend = rozdíl proti nejstaršímu vzorku v okně (kruhový buffer 60 minutových vzorků, jen v RAM), ukazuje se až od 30 vzorků (`trendMin` = délka okna, 0 = málo dat). Frontend označí data starší než 180 s jako stará.
 
+**Automatický power-cycle venkovního DHT22:** senzor je napájený z GPIO (`PIN_DHT_OUTDOOR_PWR`, default 6, `-1` = vypnuto). Pokud venkovní čtení selže `DHT_POWER_CYCLE_FAILS` (3) krát po sobě, `ClimateTask` zaloguje stav datového pinu (LOW = zaseknutý senzor nebo zkrat, HIGH = linka volná), na `DHT_PWR_OFF_MS` (2 s) vypne napájení, zapne, počká `DHT_PWR_SETTLE_MS` (2 s), zavolá `begin()` a hned čte znovu. Další cycle nejdřív po 10 min (`DHT_POWER_CYCLE_COOLDOWN_MS`). Blokuje ClimateTask asi 4 s. V JSON `climate.<senzor>` jsou `fails`, `pwrCycles` (od startu) a `cycleAgeS`. Důvod: DHT22 se občas zasekne a pomůže jen odpojit napájení; kabel je cca 3 m a pull-up na modulu je 10k, což je na tu délku slabé.
+
 ### Počasí a měsíc (`weather.cpp`)
 
 Open-Meteo (`current` + `hourly` + `daily` sunrise/sunset, `forecast_days=2`, `Europe/Prague`, souřadnice z `config.h`). Fáze měsíce se počítá lokálně z Julian Date (synodický měsíc 29,530588853 d), výsledek je lunární den 0–29. Frontend si navíc sám dopočítává countdown na další nov/úplněk.

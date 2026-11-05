@@ -56,6 +56,14 @@ extern const char* discordRoleId;
 #define CLIMATE_POLL_INTERVAL_MS 60000UL   // 1 min
 // Kolikrat po sobe selze cteni, nez se senzor oznaci jako nevalidni
 #define CLIMATE_MAX_FAILS 3
+// Napajeni venkovniho DHT22 z GPIO (senzor bere ~1,5 mA, LED s 1-2,2k rezistorem ~1 mA navic).
+// Kdyz se senzor zasekne, dashboard na chvili vypne napajeni = automaticke "odpojit/pripojit".
+// -1 = vypnuto (senzor napajen napevno). Pozor: ne GPIO 26-37 na S3.
+#define PIN_DHT_OUTDOOR_PWR        6
+#define DHT_PWR_OFF_MS             2000      // jak dlouho je napajeni vypnute
+#define DHT_PWR_SETTLE_MS          2000      // cekani po zapnuti, nez se cte (DHT22 min. interval 2 s)
+#define DHT_POWER_CYCLE_FAILS      3         // po kolika selhanich po sobe se zkusi power-cycle
+#define DHT_POWER_CYCLE_COOLDOWN_MS 600000UL // min. odstup mezi dvema power-cycly (10 min)
 // Hodinovy report na ntfy (https://ntfy.sh/<topic>), posila se v :00-:02 kazde hodiny
 #define NTFY_REPORT_TOPIC        "loskukos_dash"
 #define NTFY_CMD_TOPIC           "loskukos_cmd"          // prikazy (WOL) + jejich potvrzeni

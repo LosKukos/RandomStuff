@@ -152,6 +152,9 @@ String buildDashboardJson(bool wsWrap) {
       o["ageS"]        = r.updatedAtMs ? (millis() - r.updatedAtMs) / 1000 : -1;
       o["trend"]       = serialized(String(r.trend, 1));
       o["trendMin"]    = r.trendMin;
+      o["fails"]       = r.fails;
+      o["pwrCycles"]   = r.pwrCycles;
+      o["cycleAgeS"]   = r.lastCycleMs ? (millis() - r.lastCycleMs) / 1000 : -1;
     };
     put("indoor",  climate.indoor);
     put("outdoor", climate.outdoor);

@@ -172,6 +172,8 @@ struct DhtReading {
   uint32_t updatedAtMs;  // millis() posledniho uspesneho cteni
   float    trend;        // zmena teploty za trendMin minut (°C)
   int      trendMin;     // delka okna trendu v minutach; 0 = zatim malo dat
+  uint16_t pwrCycles;    // kolikrat se od startu automaticky restartovalo napajeni senzoru
+  uint32_t lastCycleMs;  // millis() posledniho power-cyclu (0 = zatim nikdy)
 };
 
 struct ClimateState {
