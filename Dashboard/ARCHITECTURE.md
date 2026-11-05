@@ -34,7 +34,7 @@ Za běhu vznikají na LittleFS ještě `/state.json` (`last_sent`) a `/watch.jso
 
 | Soubor               | Co řeší                                                                                                                                  |
 |----------------------|------------------------------------------------------------------------------------------------------------------------------------------|
-| `config.h/.cpp`      | Defines (piny, intervaly, hosty, topicy, souřadnice) v `.h`; WiFi, Discord webhook a role ID jako konstanty v `.cpp`.                    |
+| `config.h/.cpp`      | Defines (piny, intervaly, hosty, topicy, souřadnice) v `.h`; WiFi, Discord webhook a role ID se do `.cpp` berou ze `src/secrets.h` (není v gitu, vzor `secrets.h.example`).                    |
 | `state.h/.cpp`       | Mutexy, boot counter (RTC), flagy s get/set, struktury `DeviceState`, `AlarmState`, `WeatherState`, `ClimateState`, `DesktopState`.      |
 | `log_util.h/.cpp`    | `logLine`/`logValue`/`printDivider` – Serial výstup chráněný `serialMutex`.                                                              |
 | `breadcrumbs.h/.cpp` | RTC breadcrumbs: `bcMark()` kroky tasků, heap/stack snapshot, hodinový vzorek heapu, souhrn předchozího běhu (viz [RTC breadcrumbs](#rtc-breadcrumbs)). |
@@ -266,7 +266,7 @@ OTA, zabezpečení ntfy topicu, boot zpráva na ntfy, varování na vlhkost. Tla
 
 ## Známé limity
 
-- **Credentials v repu:** WiFi heslo, Discord webhook a role ID jsou natvrdo v `src/config.cpp`. Repo je veřejné, takže to chce přesunout do `secrets.h` v `.gitignore` a hodnoty rotovat (zůstávají v historii gitu).
+- **Credentials:** jsou v `src/secrets.h` mimo git. Ve veřejné historii repa ale zůstávají staré hodnoty (WiFi heslo, Discord webhook, role ID), webhook už je zneplatněný (smazal ho GitHub scanner 2026-11-04), WiFi heslo je třeba změnit na routeru. Názvy ntfy topiců jsou v kódu a repo je veřejné, takže kdokoli může psát na `NTFY_CMD_TOPIC` (WOL) a číst reporty.
 - **Blokující handlery v `async_tcp`:** `/api/panic` (první ntfy, TLS), `/api/send` (Discord TLS), `/api/update-time` (`getLocalTime`, default 5 s), `/api/wled/*` (HTTP timeouty 1,5 s, po POST navíc `pollWLED()`; `identify` dělá dva POSTy + `delay(350)`). Porušuje pravidlo „v async handlerech neblokovat“ z HANDOFF a hrozí task WDT při pomalé síti. Správný vzor je `/api/refresh`.
 - **TLS bez ověření certifikátu:** všude `setInsecure()` (Discord, ntfy, Open-Meteo).
 - **Žádná autentizace:** všechny endpointy i celý LittleFS root jsou dostupné komukoli v síti / přes ZeroTier.

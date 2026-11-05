@@ -2,13 +2,17 @@
 
 // =====================================================
 // SECRETS / CONFIG VALUES
-// (Kuba: tady jsou natvrdo zadrátovaný credentials - klidně
-//  to nech, mas privátní repo, ale kdyby ses jednou rozhodl
-//  pushnout to ven, tak akorát tenhle .cpp dej do .gitignore)
+// Hodnoty jsou v src/secrets.h, ktery NENI v gitu (.gitignore).
+// Vzor: src/secrets.h.example (zkopiruj na secrets.h a vypln).
 // =====================================================
 
-const char* ssid     = "Kuba";
-const char* password = "1234567890";
+#if !__has_include("secrets.h")
+#error "Chybi src/secrets.h - zkopiruj src/secrets.h.example na src/secrets.h a vypln WiFi, Discord webhook a role ID."
+#endif
+#include "secrets.h"
 
-const char* webhook      = "https://discord.com/api/webhooks/1490654155683921983/D30gBvbJD6Q1Bo-TBVnQBgkCpFTDEUEtTA1Iq8xhYbr3lNfcdI70VsOdS_W3R8s4nKeP";
-const char* discordRoleId = "1490843679295017080";
+const char* ssid     = SECRET_WIFI_SSID;
+const char* password = SECRET_WIFI_PASSWORD;
+
+const char* webhook       = SECRET_DISCORD_WEBHOOK;
+const char* discordRoleId = SECRET_DISCORD_ROLE_ID;

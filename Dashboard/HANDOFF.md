@@ -22,7 +22,7 @@ RTC breadcrumbs (commit `323d724` v `main`, `src/breadcrumbs.*`): krok každého
 ## Otevřené
 - ESP se restartovalo kvůli watchdogu: 2026-11-03 ~12:41 (interrupt WDT, uptime pak 1 h 8 min) a znovu po cca 10 h. Příčina neznámá. Další krok: nahrát breadcrumbs, počkat na další pád a podle posledního kroku tasků (`/api/crash`, ntfy report) poznat, co visí (TLS, blokující handler, únik heapu).
 - Podezřelí do doby, než breadcrumbs něco ukážou: blokující handlery v `async_tcp` (`/api/panic`, `/api/send`, `/api/update-time`, `/api/wled/*`), TLS tasky a klesající min heap.
-- Credentials (WiFi heslo, Discord webhook, role ID) jsou natvrdo v `src/config.cpp` ve veřejném repu. Přesunout do `secrets.h` v `.gitignore` a webhook rotovat.
+- Credentials jsou od 2026-11-05 v `src/secrets.h` (není v gitu, vzor `secrets.h.example`; bez něj build skončí `#error`). Discord webhook z veřejného repa smazal GitHub scanner (FriendlyScanner, 2026-11-04), takže je potřeba vytvořit nový a dát ho do `secrets.h`. Staré WiFi heslo zůstává ve veřejné historii, změnit na routeru. ntfy topicy (`loskukos_dash`, `loskukos_cmd`) jsou veřejně známé, zvážit přejmenování.
 - UI: projít vzhled a přehlednost (pořadí karet, jednotný styl, mobil, sekce Systém s diagnostikou, grafy teploty/vlhkosti). Zatím jen návrh, nic neděláno.
 - TFT sloučení (dash → odjezdy → Discord bot, přepínání tlačítkem, statické obrazovky, bez animací): čeká na Lyriq bundle + starý kód odjezdovky. Zatím jen diskuse.
 - Rozhodnout přístup k mobilnímu zrcadlení/bridge přes ntfy.
