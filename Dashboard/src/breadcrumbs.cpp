@@ -12,7 +12,7 @@
 // RTC LAYOUT
 // =====================================================
 
-#define BC_MAGIC  0xBC0DE002u
+#define BC_MAGIC  0xBC0DE003u
 #define BC_RING   48
 #define BC_HOURS  24
 #define BC_STACKS 8            // 7 tasku + loop
@@ -76,7 +76,8 @@ static const char *const STEP_NAMES[BS_COUNT] = {
   "weather_poll", "climate_read", "ntfy_report", "ntfycmd_poll",
   "desktop_poll", "buttons", "heartbeat",
   "h_panic", "h_send", "h_time", "h_wled",
-  "setup_wifi", "setup_ntp", "setup_done"
+  "setup_wifi", "setup_ntp", "setup_done",
+  "dht_in", "dht_out"
 };
 
 static_assert(sizeof(TASK_NAMES) / sizeof(TASK_NAMES[0]) == BT_COUNT, "TASK_NAMES");

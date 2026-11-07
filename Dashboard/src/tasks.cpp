@@ -61,11 +61,11 @@ bool fetchAndClearDiagRequested() {
 // =====================================================
 
 static StaticTask_t wledPollTaskBuffer;
-static StackType_t  wledPollTaskStack[4096];
+static StackType_t  wledPollTaskStack[6144];
 static TaskHandle_t wledPollTaskHandle = nullptr;
 
 static StaticTask_t espPollTaskBuffer;
-static StackType_t  espPollTaskStack[4096];
+static StackType_t  espPollTaskStack[6144];
 static TaskHandle_t espPollTaskHandle = nullptr;
 
 static StaticTask_t autoLogicTaskBuffer;
@@ -423,11 +423,11 @@ void startBackgroundTasks() {
   initSensors();
 
   wledPollTaskHandle = xTaskCreateStaticPinnedToCore(
-    wledPollTask, "WledPollTask", 4096, NULL, 1,
+    wledPollTask, "WledPollTask", 6144, NULL, 1,
     wledPollTaskStack, &wledPollTaskBuffer, 1);
 
   espPollTaskHandle = xTaskCreateStaticPinnedToCore(
-    espPollTask, "EspPollTask", 4096, NULL, 1,
+    espPollTask, "EspPollTask", 6144, NULL, 1,
     espPollTaskStack, &espPollTaskBuffer, 1);
 
   autoLogicTaskHandle = xTaskCreateStaticPinnedToCore(
