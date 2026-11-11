@@ -298,6 +298,7 @@ static void autoEvaluate() {
   autoPrevTemp = t;
   const int target = autoTarget;
 
+  logLine(String("[HEATER] auto: nove mereni t=") + fmt1(t) + " cil=" + target + " overheat=" + (oh.active ? "ano" : "ne"));
   const OhAct oa = heaterOverheatStep(oh, t, prev, (float)target, est.on);
   if (oa == OH_PRESS) {
     const uint8_t att = oh.attempts;
@@ -318,7 +319,9 @@ static void autoEvaluate() {
   if (oh.active) { unlockMutex(heaterMutex); return; }   // cekame na vysledek zasahu
 
   const AutoAct act = heaterAutoDecide(est.on, t, (float)target);
+  const bool dbgOn = est.on;
   unlockMutex(heaterMutex);
+  logLine(String("[HEATER] auto: t=") + fmt1(t) + " cil=" + target + " vypne od " + (target + (int)HEATER_AUTO_HYST) + " odhad=" + (dbgOn ? "ON" : "OFF") + " -> " + (act == AA_ON ? "ZAPNOUT" : act == AA_OFF ? "VYPNOUT" : "nic"));
   if (act == AA_ON) {
     enqueue(HB_POWER); enqueue(HB_MODE); enqueue(HB_MODE);   // Power -> ventilator -> I -> II
   } else if (act == AA_OFF) {
