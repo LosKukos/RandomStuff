@@ -3,10 +3,13 @@
 Stav k 2026-11-07. Odškrtnuté položky mazat, nové přidávat nahoru podle priority.
 
 ## Nové
-- [ ] **IR ovladač k elektrickému přímotopu:** naskenovat kódy původního ovladače a ovládat topení z dashboardu (tlačítka v UI, případně i příkaz přes ntfy `loskukos_cmd`). Detaily doladíme: které funkce topení (zap/vyp, výkon, termostat, časovač), kam umístit IR LED a přijímač, který pin (ne GPIO 26–37), knihovna (např. IRremoteESP8266).
+- [x] IR topení, etapa 1: modul `heater.cpp`, API `/api/heater*`, dokumentace v `ir.md` (nezkompilováno, kód zatím neviděl překladač).
+- [ ] IR topení, etapa 2: sekce „Topení“ v UI (pod měsícem, nad „Zařízení“): sbalená ON/OFF + AUTO/MANUAL, rozbalená manuál s 7 tlačítky, Sync pop-up. Vzhled podle schváleného náhledu.
+- [ ] IR topení, etapa 3: AUTO (cílová teplota 15–35 °C, časovač po 15 min do 8 h, hystereze +2 °C, přehřátí +4 °C s opakováním vypnutí, selhání čidla → vypnout, oznámení na `loskukos_cmd`).
+- [ ] Zapojit IR LED: GPIO 7 → 1k → BC547, LED + 100R na 5 V, ověřit dosah (~1 m) a počet opakování.
 
 ## Teď na řadě (čeká na desku)
-- [ ] Stáhnout `main`, zkompilovat a nahrát (breadcrumbs, vlastní DHT čtení `c4230f2`, DHT power-cycle, `secrets.h` – nic z toho zatím nebylo kompilované).
+- [ ] Stáhnout `main`, zkompilovat a nahrát (IR topení `heater.cpp` + knihovna IRremoteESP8266, breadcrumbs, vlastní DHT čtení `c4230f2`, DHT power-cycle, `secrets.h` – nic z toho zatím nebylo kompilované).
 - [ ] Ověřit nové čtení DHT: hodnoty indoor/outdoor vs. dashboard před flashem (±0,5 °C), vytáhnout datový vodič venkovního DHT22 za běhu (deska nesmí spadnout, jen `read failed`).
 - [ ] Zapojit venkovní DHT22: VCC z GPIO 6, LED + 1k na GND, kondenzátor 104, pull-up 10k data↔VCC.
 - [ ] Sledovat watchdog: po dalším pádu `GET /api/crash` / ntfy report. Poslední krok `dht_in` / `dht_out` potvrdí příčinu, cokoli jiného znamená hledat dál.

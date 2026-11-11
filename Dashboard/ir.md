@@ -22,7 +22,8 @@ Kódy byly získány skenováním ovladače přijímačem (modul HW-477 / KY-022
 
 - **Přijímač** (jen pro skenování): TSOP4838 nebo modul HW-477 / KY-022, výstup na GPIO. Modul HW-477 má piny `−` (GND), střední (VCC, 3V3) a `S` (signál).
 - **Vysílač:** IR LED 940 nm (např. Vishay TSAL6100) přes rezistor 100 Ω přímo z GPIO. Pro větší dosah přes tranzistor NPN (BC337 apod.): GPIO → 1 kΩ → báze, emitor na GND, kolektor na katodu LED, anoda přes 100 Ω na 5 V.
-- **Pin:** ne GPIO 26–37 (viz `To-Do.md`). Při testech čtení byl přijímač na GPIO 15.
+- **Pin:** vysílač na **GPIO 7** (`PIN_IR_TX` v `config.h`), ne GPIO 26–37 (viz `To-Do.md`). Při testech čtení byl přijímač na GPIO 15.
+- **Zapojení vysílače (zvoleno):** GPIO 7 → 1 kΩ → báze BC547, emitor GND, kolektor → katoda IR LED, anoda → 100 Ω → 5 V. Vzdálenost ~1 m.
 
 ## Knihovna
 
@@ -32,6 +33,8 @@ Kódy byly získány skenováním ovladače přijímačem (modul HW-477 / KY-022
 lib_deps =
     IRremoteESP8266
 ```
+
+Přidáno do `platformio.ini`.
 
 (Zápis `crankyoz/IRremoteESP8266` v PlatformIO registru nefunguje. Pokud by nestačil ani název, jde použít `https://github.com/crankyoz/IRremoteESP8266.git`.)
 
@@ -123,5 +126,17 @@ void loop() {
 
 - [x] Kódy všech 7 tlačítek naskenovány
 - [ ] Odeslání IR LED ověřit na skutečném topení (dosah, počet opakování)
-- [ ] Zvolit finální pin pro IR LED a zapojit
-- [ ] Napojit na dashboard (tlačítka v UI, příkaz přes ntfy `loskukos_cmd`)
+- [x] Pin zvolen (GPIO 7, BC547) – fyzicky zatím nezapojeno
+- [x] Firmware modul `heater.cpp` + API (etapa 1)
+- [ ] UI sekce Topení (etapa 2)
+- [ ] AUTO režim (etapa 3)
+
+## API (etapa 1)
+
+```
+GET  /api/heater                         stav (odhad)
+POST /api/heater/btn?btn=power|mode|spin|clock|eco|minus|plus
+POST /api/heater/sync?on=1&mode=0|1|2    oprava odhadu, nic neposílá (0 ventilátor, 1 = I, 2 = II)
+```
+
+Po výpadku napájení se topení bere jako vypnuté; po crashi/WDT/flashi se použije uložený odhad (`/heater.json`). Ruční režim vypíná po 4 h. Všechna oznámení jdou na `loskukos_cmd`.

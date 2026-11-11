@@ -22,6 +22,7 @@ enum BcTask : uint8_t {
   BT_LOOP,     // Arduino loop()
   BT_WEB,      // async_tcp handlery
   BT_SETUP,
+  BT_HEATER,   // IR ovladani topeni (za BT_SETUP, aby se nezmenilo poradi)
   BT_COUNT
 };
 
@@ -33,6 +34,7 @@ enum BcStep : uint8_t {
   BS_H_PANIC, BS_H_SEND, BS_H_TIME, BS_H_WLED,
   BS_SETUP_WIFI, BS_SETUP_NTP, BS_SETUP_DONE,
   BS_DHT_IN, BS_DHT_OUT,       // cteni vnitrniho / venkovniho DHT
+  BS_HEATER_SEND,              // odesilani IR
   BS_COUNT
 };
 

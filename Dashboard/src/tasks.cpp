@@ -16,6 +16,7 @@
 #include "desktop.h"
 #include "web_server.h"
 #include "breadcrumbs.h"
+#include "heater.h"
 
 // =====================================================
 // ISR / BUTTON FLAGS
@@ -83,6 +84,10 @@ static TaskHandle_t weatherTaskHandle = nullptr;
 static StaticTask_t ntfyCmdTaskBuffer;
 static StackType_t  ntfyCmdTaskStack[12288];   // TLS
 static TaskHandle_t ntfyCmdTaskHandle = nullptr;
+
+static StaticTask_t heaterTaskBuffer;
+static StackType_t  heaterTaskStack[12288];    // TLS pro ntfy oznameni
+static TaskHandle_t heaterTaskHandle = nullptr;
 
 static StaticTask_t climateTaskBuffer;
 static StackType_t  climateTaskStack[12288];   // TLS pro ntfy report
@@ -421,6 +426,7 @@ void requestNtfyTest() {
 
 void startBackgroundTasks() {
   initSensors();
+  initHeater();
 
   wledPollTaskHandle = xTaskCreateStaticPinnedToCore(
     wledPollTask, "WledPollTask", 6144, NULL, 1,
@@ -449,4 +455,8 @@ void startBackgroundTasks() {
   ntfyCmdTaskHandle = xTaskCreateStaticPinnedToCore(
     ntfyCmdTask, "NtfyCmdTask", 12288, NULL, 1,
     ntfyCmdTaskStack, &ntfyCmdTaskBuffer, 1);
+
+  heaterTaskHandle = xTaskCreateStaticPinnedToCore(
+    heaterTask, "HeaterTask", 12288, NULL, 1,
+    heaterTaskStack, &heaterTaskBuffer, 1);
 }

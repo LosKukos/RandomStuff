@@ -92,3 +92,10 @@ extern const char* discordRoleId;
 #define WEATHER_LON  "18.35"
 #define WEATHER_POLL_INTERVAL_MS 900000UL   // 15 min
 #define WEATHER_FORECAST_HOURS   168
+
+// =====================================================
+// HEATER (IR ovladani pritmotopu)
+// =====================================================
+
+#define PIN_IR_TX                7        // IR LED pres BC547 (1k na bazi, 100R k LED)
+#define HEATER_MANUAL_LIMIT_S    (4UL * 3600UL)   // rucni rezim: automaticke vypnuti po 4 h

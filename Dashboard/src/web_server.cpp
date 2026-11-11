@@ -2,6 +2,7 @@
 #include <WiFi.h>
 #include <LittleFS.h>
 #include "config.h"
+#include "heater.h"
 #include "state.h"
 #include "log_util.h"
 #include "devices.h"
@@ -275,6 +276,36 @@ void startDashboardServer() {
     doc["ok"]    = ok;
     doc["count"] = arr.size();
     sendJsonResponse(request, ok ? 200 : 500, doc);
+  });
+
+  // Topeni (IR): GET stav, POST /api/heater/btn?btn=power|mode|spin|clock|eco|minus|plus,
+  // POST /api/heater/sync?on=1&mode=0..2 (opravi odhad stavu, nic neposila)
+  server.on("/api/heater", HTTP_GET, [](AsyncWebServerRequest *request) {
+    JsonDocument doc;
+    heaterStatus(doc);
+    sendJsonResponse(request, 200, doc);
+  });
+  server.on("/api/heater/btn", HTTP_POST, [](AsyncWebServerRequest *request) {
+    HeaterBtn b;
+    const bool known = request->hasParam("btn") &&
+                       heaterBtnFromName(request->getParam("btn")->value().c_str(), b);
+    JsonDocument doc;
+    bool ok = known && heaterSendButton(b);
+    doc["ok"] = ok;
+    sendJsonResponse(request, known ? (ok ? 202 : 503) : 400, doc);
+  });
+  server.on("/api/heater/sync", HTTP_POST, [](AsyncWebServerRequest *request) {
+    JsonDocument doc;
+    if (!request->hasParam("on")) {
+      doc["ok"] = false;
+      sendJsonResponse(request, 400, doc);
+      return;
+    }
+    const bool on = request->getParam("on")->value() == "1";
+    const int mode = request->hasParam("mode") ? request->getParam("mode")->value().toInt() : 0;
+    heaterSync(on, (uint8_t)(mode < 0 || mode > 2 ? 0 : mode));
+    doc["ok"] = true;
+    sendJsonResponse(request, 200, doc);
   });
 
   // Rucni WOL z dashboardu (UDP broadcast, rychle a neblokujici)
