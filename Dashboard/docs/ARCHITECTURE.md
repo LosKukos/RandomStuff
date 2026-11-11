@@ -1,15 +1,15 @@
 # ESP32 Dashboard (Dashboard climate V1) – architektura
 
-Domácí dashboard na ESP32-S3: network-ops panel (WLED, Minecraft controller, panic-button), denní svátková hláška na Discord, SOS/panic alarm, klima (DHT11/DHT22), počasí + měsíc, hodinový report na ntfy a Wake-on-LAN + health check desktopu.
+Domácí dashboard na ESP32-S3: network-ops panel (WLED, Minecraft controller, panic-button), denní svátková hláška na Discord, SOS/panic alarm, klima (DHT11/DHT22), IR ovládání přímotopu, počasí + měsíc, hodinový report na ntfy a Wake-on-LAN + health check desktopu.
 
-Stav k 2026-11-05. Aktuální rozpracované věci a pravidla pro práci jsou v [HANDOFF.md](HANDOFF.md), tento dokument popisuje strukturu kódu.
+Stav k 2026-11-11. Aktuální rozpracované věci a pravidla pro práci jsou v [HANDOFF.md](HANDOFF.md), úkoly v [To-Do.md](To-Do.md), tento dokument popisuje strukturu kódu. IR ovládání topení: [ir.md](ir.md), RFID čtečka: [rfid.md](rfid.md).
 
 * * *
 
 ## Platforma
 
 - ESP32-S3 (`esp32-s3-devkitc-1`, `qio_opi`, 8 MB PSRAM), PlatformIO + Arduino, jeden env `[env:esp32s3]`, LittleFS.
-- Knihovny: AsyncTCP, ESPAsyncWebServer, ArduinoJson v7, Adafruit NeoPixel, PubSubClient, DHT sensor library, Adafruit Unified Sensor.
+- Knihovny: AsyncTCP, ESPAsyncWebServer, ArduinoJson v7, Adafruit NeoPixel, PubSubClient, IRremoteESP8266 (DHT čtení je vlastní, knihovny DHT sensor library / Adafruit Unified Sensor zůstávají v `platformio.ini`, ale nepoužívají se).
 - GPIO 26–37 jsou na S3 s octal PSRAM nepoužitelné (flash/PSRAM).
 - UI se nahrává do LittleFS (`data/` → `pio run -t uploadfs`).
 
@@ -22,11 +22,15 @@ Dashboard/
 ├── data/                UI + data na LittleFS: index.html, app.js, style.css, favicon.ico, names.json
 ├── remote_setup.bat     ZeroTier port forward (spouštět jako admin)
 ├── remote_teardown.bat  zrušení port forwardu
-├── HANDOFF.md           stav + pravidla pro nový chat
-└── ARCHITECTURE.md      tento soubor
+└── docs/                veškerá dokumentace (.md)
+    ├── ARCHITECTURE.md  tento soubor
+    ├── HANDOFF.md       stav + pravidla pro nový chat
+    ├── To-Do.md         úkoly
+    ├── ir.md            IR kódy ovladače topení, zapojení, API
+    └── rfid.md          RC522 čtečka, tagy, zapojení
 ```
 
-Za běhu vznikají na LittleFS ještě `/state.json` (`last_sent`) a `/watch.json` (sledovaná jména).
+Za běhu vznikají na LittleFS ještě `/state.json` (`last_sent`), `/watch.json` (sledovaná jména) a `/heater.json` (odhad stavu topení, cíl a čas AUTO).
 
 * * *
 
@@ -47,11 +51,12 @@ Za běhu vznikají na LittleFS ještě `/state.json` (`last_sent`) a `/watch.jso
 | `ntfy_cmd.h/.cpp`    | Poll příkazového topicu (`NTFY_CMD_TOPIC`), zatím jediný příkaz `WOL`.                                                                   |
 | `wol.h/.cpp`         | `sendMagicPacket()` – UDP broadcast na porty 9 a 7.                                                                                      |
 | `desktop.h/.cpp`     | `wakeDesktop()`, health check desktopu (TCP connect), debounce, ntfy ONLINE/OFFLINE.                                                     |
-| `sensors.h/.cpp`     | DHT11 (indoor) + DHT22 (outdoor), validace po sobě jdoucích selhání, kruhový buffer pro trend.                                           |
+| `sensors.h/.cpp`     | DHT11 (indoor) + DHT22 (outdoor) přes vlastní čtečku s omezenými timeouty, validace po sobě jdoucích selhání, kruhový buffer pro trend.   |
+| `heater.h/.cpp`, `heater_logic.h` | IR ovládání přímotopu (viz [Topení](#topení-ir)); `heater_logic.h` je čistá logika bez HW (testovatelná na PC).                |
 | `weather.h/.cpp`     | Open-Meteo (bez API klíče), WMO kód → ikona/popis, východ/západ, fáze měsíce počítaná lokálně.                                           |
 | `diagnostics.h/.cpp` | `printDiagnostics()`, `doDiagnostics()`, `heartbeat()`, `resetReasonStr()`.                                                              |
 | `web_server.h/.cpp`  | AsyncWebServer routy, websocket `/ws`, `buildDashboardJson()`, `broadcastDashboard()`.                                                   |
-| `tasks.h/.cpp`       | ISR pro tlačítka, 7 statických RTOS tasků, `requestRefreshAll()`, `requestNtfyTest()`.                                                   |
+| `tasks.h/.cpp`       | ISR pro tlačítka, 8 statických RTOS tasků, `requestRefreshAll()`, `requestNtfyTest()`.                                                   |
 | `main.cpp`           | Jen `setup()` a `loop()`.                                                                                                                |
 
 * * *
@@ -90,17 +95,18 @@ Za běhu vznikají na LittleFS ještě `/state.json` (`last_sent`) a `/watch.jso
 
 ## RTOS tasky
 
-Všechny jsou staticky alokované (`xTaskCreateStaticPinnedToCore`, core 1; core 0 je pro WiFi/BT stack). Celkem 64 KiB stacků v interní RAM.
+Všechny jsou staticky alokované (`xTaskCreateStaticPinnedToCore`, core 1; core 0 je pro WiFi/BT stack). Celkem asi 76 KiB stacků v interní RAM.
 
 | Task            | Stack    | Prio  | Interval                                   | Co dělá                                                                                          |
 |-----------------|----------|-------|--------------------------------------------|--------------------------------------------------------------------------------------------------|
-| `WledPollTask`  | 4096 B   | 1     | 5 s (`DEVICE_POLL_INTERVAL_MS`) + notify   | `pollWLED()` + broadcast                                                                         |
-| `EspPollTask`   | 4096 B   | 1     | 5 s + notify                               | poll `mc` a `panic-button` (`/api/dash-status`, HTTP timeout 1,5 s) + broadcast                  |
+| `WledPollTask`  | 6144 B   | 1     | 5 s (`DEVICE_POLL_INTERVAL_MS`) + notify   | `pollWLED()` + broadcast                                                                         |
+| `EspPollTask`   | 6144 B   | 1     | 5 s + notify                               | poll `mc` a `panic-button` (`/api/dash-status`, HTTP timeout 1,5 s) + broadcast                  |
 | `AutoLogicTask` | 8192 B   | 1     | 60 s                                       | aktualizace času, auto-odeslání svátku na Discord                                                |
 | `EmergencyTask` | 8192 B   | **2** | 2 s idle / 1 s při alarmu                  | viz [Emergency mode](#emergency-mode)                                                            |
 | `WeatherTask`   | 16384 B  | 1     | 15 min (`WEATHER_POLL_INTERVAL_MS`) + notify | `pollWeather()` (TLS)                                                                          |
 | `ClimateTask`   | 12288 B  | 1     | 60 s + notify                              | DHT čtení, hodinový ntfy report (TLS)                                                            |
 | `NtfyCmdTask`   | 12288 B  | 1     | tick 1 s                                   | ntfy příkazy každých 15 s, health check desktopu každých 15 s (3 s po WOL, 180 s)                |
+| `HeaterTask`    | 12288 B  | 1     | fronta + 5 s                               | odesílání IR, AUTO logika, limity, ntfy chyby (TLS)                                              |
 
 Tasky s „notify“ se vzbudí přes `xTaskNotifyGive` (manuální refresh, ntfy test). Důvod rozdělení pollerů: pomalá WLED nezdrží monitoring panic-buttonu a naopak.
 
@@ -150,7 +156,7 @@ Poznámky: `alarm.receivedAtMs` je ve skutečnosti epoch v sekundách (`mktime`)
 
 ### Klima (`sensors.cpp`)
 
-DHT11 indoor na GPIO 5, DHT22 outdoor na GPIO 4, čtení každou minutu. Měření je `valid`, dokud po sobě neselže `CLIMATE_MAX_FAILS` (3) čtení. Trend = rozdíl proti nejstaršímu vzorku v okně (kruhový buffer 60 minutových vzorků, jen v RAM), ukazuje se až od 30 vzorků (`trendMin` = délka okna, 0 = málo dat). Frontend označí data starší než 180 s jako stará.
+DHT11 indoor na GPIO 5, DHT22 outdoor na GPIO 4, čtení každou minutu. Čtení je vlastní (`dhtRead`), ne Adafruit knihovna: ta na ESP32 vypínala přerušení a četla všech 80 pulzů bez předčasného konce, což vedlo k interrupt watchdogu (poslední krok vždy `climate_read`). Vlastní čtečka hlídá každou hranu přes `micros()` s timeouty (200/150/100/150 µs), při chybě skončí hned, kontroluje checksum a rozsah a drží min. interval 2 s; chyby se logují jako `[SENSORS] read failed: <senzor> (<důvod>)`. Venkovní čidlo v černé krabičce na slunci ukazovalo o několik °C víc (solární ohřev), řešení: bílý nátěr / stínítko. Měření je `valid`, dokud po sobě neselže `CLIMATE_MAX_FAILS` (3) čtení. Trend = rozdíl proti nejstaršímu vzorku v okně (kruhový buffer 60 minutových vzorků, jen v RAM), ukazuje se až od 30 vzorků (`trendMin` = délka okna, 0 = málo dat). Frontend označí data starší než 180 s jako stará.
 
 **Automatický power-cycle venkovního DHT22:** senzor je napájený z GPIO (`PIN_DHT_OUTDOOR_PWR`, default 6, `-1` = vypnuto). Pokud venkovní čtení selže `DHT_POWER_CYCLE_FAILS` (3) krát po sobě, `ClimateTask` zaloguje stav datového pinu (LOW = zaseknutý senzor nebo zkrat, HIGH = linka volná), na `DHT_PWR_OFF_MS` (2 s) vypne napájení, zapne, počká `DHT_PWR_SETTLE_MS` (2 s), zavolá `begin()` a hned čte znovu. Další cycle nejdřív po 10 min (`DHT_POWER_CYCLE_COOLDOWN_MS`). Blokuje ClimateTask asi 4 s. V JSON `climate.<senzor>` jsou `fails`, `pwrCycles` (od startu) a `cycleAgeS`. Důvod: DHT22 se občas zasekne a pomůže jen odpojit napájení; kabel je cca 3 m a pull-up na modulu je 10k, což je na tu délku slabé.
 
@@ -177,13 +183,25 @@ Open-Meteo (`current` + `hourly` + `daily` sunrise/sunset, `forecast_days=2`, `E
 - **Health check:** TCP connect na RDP (3389) nebo SMB (445) s timeoutem 1 s. Online se projeví hned, offline až po 2 neúspěších po sobě. ntfy ONLINE/OFFLINE jde jen při změně (ne při první kontrole).
 - **WOL:** magic packet přes UDP broadcast (porty 9 a 7). Spouští se příkazem `WOL` na `NTFY_CMD_TOPIC` nebo `POST /api/wol`. Po odeslání se `DESKTOP_WAKE_WINDOW_MS` (180 s) kontroluje každé 3 s místo 15 s a UI ukazuje „probouzím“.
 
+### Topení (IR)
+
+IR LED na `PIN_IR_TX` (GPIO 7, přes BC547), protokol SYMPHONY 12 bit 38 kHz, 3 opakování. Ovladač je jednosmerný, takže stav (`on`, `mode`) je jen **odhad**: Power je toggle, Mode cykluje Ventilátor → I (1000 W) → II (2000 W), po Power vždy začíná ventilátor. Odhad se persistuje v `/heater.json`; po výpadku napájení se topení bere jako vypnuté (stejný okruh), po jiném restartu se použije uložený odhad. Pokud odhad nesedí, oprava přes Sync (`/api/heater/sync`).
+
+`HeaterTask` zpracovává frontu příkazů (HTTP handlery jen zařazují, nikdy neblokují) a každých 5 s vyhodnocuje limity a AUTO. ntfy se posílá jen z tasku přes frontu zpráv a jen u chyb (`NTFY_CMD_TOPIC`).
+
+- **Manual:** 7 tlačítek ovladače, limit 4 h (`HEATER_MANUAL_LIMIT_S`), pak se vypne.
+- **AUTO:** cíl 15–35 °C, časovač po 15 min do 8 h. Podle indoor DHT11 zapne pod cílem (Power + Mode×2 = režim II) a vypne od cíl + 2 °C. Při cíl + 4 °C pošle Power; když 3 měření po sobě neklesají ani nestagnují, zkusí znovu (max 3×), pak AUTO ukončí. Chyba čidla (neplatné nebo starší než 5 min) AUTO ukončí a topení vypne. Změna času za běhu restartuje odpočet, konec → vypnout a zpět na manual. Restart AUTO ruší.
+- **Pravidlo:** AUTO neběží přes restart, tlačítka jsou za AUTO zamčená (409/503).
+
+Endpointy v tabulce níže, podrobnosti a zapojení v [ir.md](ir.md).
+
 ### RTC breadcrumbs
 
 Diagnostika pádů (watchdog, panic, brownout). Data jsou v `RTC_NOINIT` paměti, takže přežijí tyto resety, ale ne výpadek napájení (po power-on se zahodí). Při každém startu `bcInit()` zkopíruje starý obsah do obyčejné RAM (`prev`) a RTC vynuluje.
 
 Co se zapisuje:
-- **`bcMark(task, step)`** – lock-free, volatelné z kteréhokoli tasku. Zapíše krok do ringu 48 záznamů (čas, task, krok, jádro) a jako „poslední krok“ daného tasku. Tasky ho volají kolem blokujících operací (poll WLED/ESP, Discord, weather, klima, ntfy report, ntfy příkazy, health check desktopu) a handlery `/api/panic`, `/api/send`, `/api/update-time` a WLED POST značí krok pod taskem `web`. Běžný stav je `idle`.
-- **`bcHeartbeat()`** (z `loop()` každých 10 s) – snapshot: uptime, volný internal heap, minimum od startu, největší souvislý blok, volná PSRAM, RSSI a volný stack všech 7 tasků i `loop`.
+- **`bcMark(task, step)`** – lock-free, volatelné z kteréhokoli tasku. Zapíše krok do ringu 48 záznamů (čas, task, krok, jádro) a jako „poslední krok“ daného tasku. Tasky ho volají kolem blokujících operací (poll WLED/ESP, Discord, weather, klima včetně kroků `dht_in` / `dht_out`, IR odeslání `heater_send`, ntfy report, ntfy příkazy, health check desktopu) a handlery `/api/panic`, `/api/send`, `/api/update-time` a WLED POST značí krok pod taskem `web`. Běžný stav je `idle`.
+- **`bcHeartbeat()`** (z `loop()` každých 10 s) – snapshot: uptime, volný internal heap, minimum od startu, největší souvislý blok, volná PSRAM, RSSI a volný stack tasků i `loop`.
 - **`bcHourlySample()`** (z `ClimateTask` při hodinovém reportu) – vzorek heapu, drží se posledních 24.
 
 Kde se to čte po restartu:
@@ -218,6 +236,10 @@ Statické soubory: `serveStatic("/", LittleFS, "/")` s `index.html` jako default
 | `/api/refresh`                                  | POST   | neblokující: vzbudí WLED/ESP/weather/climate tasky, vrací 202                 |
 | `/api/ntfy-test`                                | POST   | neblokující: zařadí hodinový report, vrací 202                                |
 | `/api/wol`                                      | POST   | pošle magic packet (UDP, rychlé)                                              |
+| `/api/heater`                                   | GET    | stav topení (odhad, AUTO, teplota, upozornění)                                |
+| `/api/heater/btn?btn=power\|mode\|spin\|clock\|eco\|minus\|plus` | POST | zařadí odeslání IR (neblokuje), jen v manuálu                |
+| `/api/heater/sync?on=1&mode=0..2`               | POST   | opraví odhad stavu, nic neposílá                                              |
+| `/api/heater/auto/{start,update,stop}`          | POST   | AUTO (`target`, `minutes`); start vrací 409 bez platného čidla                |
 | `/api/watch?names=A,B`                          | POST   | uloží sledovaná jména do `/watch.json`                                        |
 | `/api/panic` ⚠                                  | POST   | JSON `type` = `panic` / `panic_reset`, vrací ack `espdash.ack.v1`             |
 | `/api/send` ⚠                                   | POST   | ruční odeslání svátku na Discord                                              |
@@ -229,7 +251,7 @@ Statické soubory: `serveStatic("/", LittleFS, "/")` s `index.html` jako default
 
 ## Frontend (`data/`)
 
-Jedna stránka (`index.html` + `app.js` + `style.css`), data přijímá přes websocket (po odpojení reconnect po 2 s) a jako zálohu dotahuje `GET /api/status` každých 5 s. Sekce: hodiny + dnešní jména, karty klimatu (trend, stará data, „Pozor, zima“ při venku ≤ 1,0 °C), počasí + hodinová předpověď, karta měsíce, karta desktopu (stav + tlačítko WOL), karty zařízení (WLED ovládání, odkazy na zařízení), stat karty (IP, heap, WS), sbalitelné sekce Svátek a Sledované svátky, fullscreen alarm overlay.
+Jedna stránka (`index.html` + `app.js` + `style.css`), data přijímá přes websocket (po odpojení reconnect po 2 s) a jako zálohu dotahuje `GET /api/status` každých 5 s. Sekce: hodiny + dnešní jména, karty klimatu (trend, stará data, „Pozor, zima“ při venku ≤ 1,0 °C), počasí + hodinová předpověď, karta měsíce, sekce Topení (sbalená ON/OFF + Auto/Manual; rozbalená: ruční ovladač, AUTO nastavení a běh, Sync pop-up, pruh s upozorněním), karta desktopu (stav + tlačítko WOL), karty zařízení (WLED ovládání, odkazy na zařízení), stat karty (IP, heap, WS), sbalitelné sekce Svátek a Sledované svátky, fullscreen alarm overlay.
 
 **Access mode (Local / Remote):** při prvním načtení se vybírá a pamatuje v `localStorage` (`dashAccessMode`). Local otevírá zařízení přes `*.local`, Remote přes ZeroTier IP a porty z `DEVICE_ACCESS` v `app.js` (WLED 7070, MC 9090). Dashboard samotný je přes remote na portu 8080.
 
@@ -260,7 +282,7 @@ Priorita: červená > modrá > zelená. Pin podle `PIN_NEOPIXEL` z Arduino core 
 
 ## Záměrně není
 
-OTA, zabezpečení ntfy topicu, boot zpráva na ntfy, varování na vlhkost. Tlačítka jsou v kódu, ale nezapojená.
+OTA, zabezpečení ntfy topicu, boot zpráva na ntfy, varování na vlhkost. Tlačítka jsou v kódu, ale nezapojená. ntfy oznámení u topení jen pro chyby.
 
 * * *
 
@@ -274,6 +296,6 @@ OTA, zabezpečení ntfy topicu, boot zpráva na ntfy, varování na vlhkost. Tla
 - **Duplicitní konstanty:** práh mrazu 1,0 °C je natvrdo v `tasks.cpp` (report) i `app.js` (UI); SOS topic je natvrdo v `ntfy.cpp`; ZeroTier IP je v `app.js` i `remote_setup.bat`.
 - **Předpověď:** `WEATHER_FORECAST_HOURS` je 168, ale s `forecast_days=2` API vrací nejvýš 48 hodin a JSON ořezává na 48.
 - **Perzistence:** historie trendu je jen v RAM, `bootCounter` i breadcrumbs se nulují při výpadku napájení.
-- **Breadcrumbs nejsou ověřené na desce:** modul prošel jen syntax-checkem na stubech, nebyl zkompilovaný v PlatformIO ani nahraný.
-- **Otevřené:** opakované restarty kvůli watchdogu (2026-11-03 a znovu po cca 10 h), TFT sloučení, rozhodnutí o mobilním zrcadlení přes ntfy a úprava vzhledu UI: viz HANDOFF.md.
+- **Nezkompilováno:** breadcrumbs, vlastní DHT čtečka (ta je od 2026-11-07 nahraná) a hlavně modul topení nebyly zkompilované v PlatformIO a topení nebylo vyzkoušené na zařízení (IR LED zatím nezapojená).
+- **Otevřené:** opakované restarty kvůli watchdogu (2026-11-03 a znovu po cca 10 h), TFT sloučení, rozhodnutí o mobilním zrcadlení přes ntfy a úprava vzhledu UI: viz [HANDOFF.md](HANDOFF.md).
 - SolaX, tepelné čerpadlo a kamery sem záměrně nepatří, jsou to samostatné projekty.

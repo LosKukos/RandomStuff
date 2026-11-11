@@ -1,11 +1,12 @@
 # Dashboard – To-Do
 
-Stav k 2026-11-07. Odškrtnuté položky mazat, nové přidávat nahoru podle priority.
+Stav k 2026-11-11. Odškrtnuté položky mazat, nové přidávat nahoru podle priority.
 
 ## Nové
 - [x] IR topení, etapa 1: modul `heater.cpp`, API `/api/heater*`, dokumentace v `ir.md` (nezkompilováno, kód zatím neviděl překladač).
 - [x] IR topení, etapa 2 (hotovo, Auto tlačítko zatím neaktivní): sekce „Topení“ v UI (pod měsícem, nad „Zařízení“): sbalená ON/OFF + AUTO/MANUAL, rozbalená manuál s 7 tlačítky, Sync pop-up. Vzhled podle schváleného náhledu.
 - [x] IR topení, etapa 3 (hotovo, nezkompilováno): AUTO (cílová teplota 15–35 °C, časovač po 15 min do 8 h, hystereze +2 °C, přehřátí +4 °C s opakováním vypnutí, selhání čidla → vypnout, oznámení na `loskukos_cmd`).
+- [ ] Zkompilovat a nahrát firmware s topením (`pio run`, `uploadfs`), po uploadfs nastavit stav přes Sync.
 - [ ] Zapojit IR LED: GPIO 7 → 1k → BC547, LED + 100R na 5 V, ověřit dosah (~1 m) a počet opakování.
 
 ## Teď na řadě (čeká na desku)
@@ -29,4 +30,4 @@ Stav k 2026-11-07. Odškrtnuté položky mazat, nové přidávat nahoru podle pr
 - [ ] Otestovat na desce: sledované svátky, příkaz přes `loskukos_cmd` (přihlásit odběr v ntfy appce).
 
 ## Dokumentace
-- [ ] Aktualizovat `ARCHITECTURE.md` a `HANDOFF.md` (vlastní DHT čtení místo Adafruit knihovny, nové breadcrumby `dht_in` / `dht_out`, větší stacky `wled` a `esp`, odkaz na tento soubor).
+- [x] `ARCHITECTURE.md` a `HANDOFF.md` aktualizované 2026-11-11, dokumentace přesunuta do `docs/`.

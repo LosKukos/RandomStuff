@@ -22,7 +22,7 @@ Kódy byly získány skenováním ovladače přijímačem (modul HW-477 / KY-022
 
 - **Přijímač** (jen pro skenování): TSOP4838 nebo modul HW-477 / KY-022, výstup na GPIO. Modul HW-477 má piny `−` (GND), střední (VCC, 3V3) a `S` (signál).
 - **Vysílač:** IR LED 940 nm (např. Vishay TSAL6100) přes rezistor 100 Ω přímo z GPIO. Pro větší dosah přes tranzistor NPN (BC337 apod.): GPIO → 1 kΩ → báze, emitor na GND, kolektor na katodu LED, anoda přes 100 Ω na 5 V.
-- **Pin:** vysílač na **GPIO 7** (`PIN_IR_TX` v `config.h`), ne GPIO 26–37 (viz `To-Do.md`). Při testech čtení byl přijímač na GPIO 15.
+- **Pin:** vysílač na **GPIO 7** (`PIN_IR_TX` v `config.h`), ne GPIO 26–37 (viz [To-Do.md](To-Do.md)). Při testech čtení byl přijímač na GPIO 15.
 - **Zapojení vysílače (zvoleno):** GPIO 7 → 1 kΩ → báze BC547, emitor GND, kolektor → katoda IR LED, anoda → 100 Ω → 5 V. Vzdálenost ~1 m.
 
 ## Knihovna
