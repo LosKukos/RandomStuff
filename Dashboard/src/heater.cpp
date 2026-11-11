@@ -170,7 +170,6 @@ bool heaterAutoStart(int target, int minutes) {
   const uint8_t presses = heaterModePresses(est.mode, HM_II);
   unlockMutex(heaterMutex);
   if (needMode) for (uint8_t i = 0; i < presses; i++) enqueue(HB_MODE);
-  note(String("AUTO start: cil ") + autoTarget + " C, " + autoMinutes + " min");
   return true;
 }
 
@@ -185,7 +184,6 @@ void heaterAutoUpdate(int target, int minutes) {
   if (timeChanged) { autoTotalS = (uint32_t)nm * 60UL; autoStartMs = millis(); }   // odpocet znovu od ted
   persist();
   unlockMutex(heaterMutex);
-  note(String("AUTO zmena: cil ") + nt + " C, " + nm + " min");
 }
 
 // konec AUTO (volat s drzenym mutexem); vrati true kdyz je treba vypnout topeni
@@ -201,7 +199,6 @@ void heaterAutoStop() {
   const bool needOff = endAutoLocked();
   unlockMutex(heaterMutex);
   if (needOff) enqueue(HB_POWER);
-  note("AUTO zastaveno uzivatelem, topeni vypnuto");
 }
 
 void heaterStatus(JsonDocument &doc) {
@@ -266,7 +263,6 @@ static void autoEvaluate() {
     const bool needOff = endAutoLocked();
     unlockMutex(heaterMutex);
     if (needOff) enqueue(HB_POWER);
-    note("AUTO dobehlo, topeni vypnuto");
     return;
   }
   // chyba cidla
@@ -308,10 +304,8 @@ static void autoEvaluate() {
   unlockMutex(heaterMutex);
   if (act == AA_ON) {
     enqueue(HB_POWER); enqueue(HB_MODE); enqueue(HB_MODE);   // Power -> ventilator -> I -> II
-    note(String("AUTO: zapinam (") + fmt1(t) + " C < " + target + " C)");
   } else if (act == AA_OFF) {
     enqueue(HB_POWER);
-    note(String("AUTO: vypinam (") + fmt1(t) + " C)");
   }
 }
 

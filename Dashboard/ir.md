@@ -139,7 +139,7 @@ POST /api/heater/btn?btn=power|mode|spin|clock|eco|minus|plus
 POST /api/heater/sync?on=1&mode=0|1|2    oprava odhadu, nic neposílá (0 ventilátor, 1 = I, 2 = II)
 ```
 
-Po výpadku napájení se topení bere jako vypnuté; po crashi/WDT/flashi se použije uložený odhad (`/heater.json`). Ruční režim vypíná po 4 h. Oznámení (`loskukos_cmd`) chodí jen u AUTO (start, změna, zapnutí/vypnutí, konec, chyba čidla, přehřátí) a při limitu ručního režimu; ruční tlačítka a Sync ntfy neposílají.
+Po výpadku napájení se topení bere jako vypnuté; po crashi/WDT/flashi se použije uložený odhad (`/heater.json`). Ruční režim vypíná po 4 h. Oznámení (`loskukos_cmd`) chodí jen při chybách: chyba čidla, přehřátí (pokusy o vypnutí i selhání) a limit ručního režimu. Běžné akce (tlačítka, Sync, start/stop/běh AUTO) ntfy neposílají.
 
 ```
 POST /api/heater/auto/start?target=21&minutes=60   (409 = čidlo nemá platnou teplotu)
