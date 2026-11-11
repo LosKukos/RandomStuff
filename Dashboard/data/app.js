@@ -862,7 +862,17 @@ async function heaterBtn(name) {
   try {
     await fetch(`/api/heater/btn?btn=${encodeURIComponent(name)}`, { method: "POST", cache: "no-store" });
   } catch (e) { /* ignore */ }
-  setTimeout(fetchHeater, 900);
+  heaterBurstPoll();
+}
+
+let heaterBurstTimer = null;
+function heaterBurstPoll() {
+  let n = 0;
+  if (heaterBurstTimer) clearInterval(heaterBurstTimer);
+  heaterBurstTimer = setInterval(() => {
+    fetchHeater();
+    if (++n >= 5) { clearInterval(heaterBurstTimer); heaterBurstTimer = null; }
+  }, 1000);
 }
 
 function heaterRenderSync() {

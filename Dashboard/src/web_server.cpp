@@ -317,6 +317,19 @@ void startDashboardServer() {
     doc["ok"] = true;
     sendJsonResponse(request, 200, doc);
   });
+  // POST /api/heater/cfg?repeat=0..5: pocet dalsich IR ramcu za stisk (celkem 1 + repeat)
+  server.on("/api/heater/cfg", HTTP_POST, [](AsyncWebServerRequest *request) {
+    JsonDocument doc;
+    if (!request->hasParam("repeat")) {
+      doc["ok"] = false;
+      sendJsonResponse(request, 400, doc);
+      return;
+    }
+    const int r = request->getParam("repeat")->value().toInt();
+    heaterSetRepeat((uint8_t)(r < 0 ? 0 : r > 5 ? 5 : r));
+    doc["ok"] = true;
+    sendJsonResponse(request, 200, doc);
+  });
   server.on("/api/heater/sync", HTTP_POST, [](AsyncWebServerRequest *request) {
     JsonDocument doc;
     if (!request->hasParam("on")) {

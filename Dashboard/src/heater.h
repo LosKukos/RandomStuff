@@ -17,3 +17,4 @@ bool heaterAutoStart(int target, int minutes);   // false = chybi platne cidlo
 void heaterAutoUpdate(int target, int minutes);  // za behu; zmena casu restartuje odpocet
 void heaterAutoStop();                           // zastavi a vypne topeni
 void heaterClearAlert();
+void heaterSetRepeat(uint8_t r);              // dalsi IR ramce za stisk (0..5, default 3); uklada se

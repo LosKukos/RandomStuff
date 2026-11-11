@@ -34,6 +34,7 @@ static SemaphoreHandle_t heaterMutex = nullptr;
 static HeaterEst est = {false, HM_FAN};
 static uint32_t  onSinceMs = 0;      // millis() zapnuti (0 = vypnuto)
 static bool      lastSendOk = true;
+static uint8_t   irRepeat = 3;           // dalsi rámce za jeden stisk (celkem 1 + irRepeat)
 
 // AUTO
 static bool      autoActive = false;
@@ -62,6 +63,7 @@ static void persist() {
   d["mode"] = est.mode;
   d["target"] = autoTarget;
   d["minutes"] = autoMinutes;
+  d["repeat"] = irRepeat;
   serializeJson(d, f);
   f.close();
 }
@@ -99,6 +101,8 @@ void initHeater() {
     if (!deserializeJson(d, f)) {
       autoTarget = heaterClampTarget(d["target"] | 21);
       autoMinutes = heaterClampMinutes(d["minutes"] | 60);
+      irRepeat = d["repeat"] | 3;
+      if (irRepeat > 5) irRepeat = 3;
       // Po vypadku napajeni je topeni (stejny okruh) vypnute. Po jinem restartu
       // (crash/WDT/flash) bezelo dal, tak vezmeme ulozeny odhad.
       if (!powerOn) {
@@ -134,6 +138,15 @@ void heaterSync(bool on, uint8_t mode) {
   clearAlertLocked();
   persist();
   unlockMutex(heaterMutex);
+}
+
+void heaterSetRepeat(uint8_t r) {
+  if (r > 5) r = 5;
+  if (lockMutex(heaterMutex, pdMS_TO_TICKS(200))) {
+    irRepeat = r;
+    persist();
+    unlockMutex(heaterMutex);
+  }
 }
 
 void heaterClearAlert() {
@@ -221,6 +234,7 @@ void heaterStatus(JsonDocument &doc) {
   doc["onForS"] = onS;
   doc["manualLeftS"] = (on && !au) ? (onS >= HEATER_MANUAL_LIMIT_S ? 0 : HEATER_MANUAL_LIMIT_S - onS) : 0;
   doc["lastSendOk"] = lastSendOk;
+  doc["repeat"] = irRepeat;
 
   doc["target"] = tgt;
   doc["minutes"] = mins;
@@ -242,7 +256,7 @@ void heaterStatus(JsonDocument &doc) {
 static void sendOne(uint8_t v) {
   const HeaterBtn b = (HeaterBtn)(v & 0x7F);
   bcMark(BT_HEATER, BS_HEATER_SEND);
-  irsend.sendSymphony(IR_CODES[b], 12, 3);
+  irsend.sendSymphony(IR_CODES[b], 12, irRepeat);
   lastSendOk = true;
   logLine(String("[HEATER] IR sent: ") + heaterBtnName(b));
   bcMark(BT_HEATER, BS_IDLE);

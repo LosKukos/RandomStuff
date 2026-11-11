@@ -23,7 +23,10 @@ Kódy byly získány skenováním ovladače přijímačem (modul HW-477 / KY-022
 - **Přijímač** (jen pro skenování): TSOP4838 nebo modul HW-477 / KY-022, výstup na GPIO. Modul HW-477 má piny `−` (GND), střední (VCC, 3V3) a `S` (signál).
 - **Vysílač:** IR LED 940 nm (např. Vishay TSAL6100) přes rezistor 100 Ω přímo z GPIO. Pro větší dosah přes tranzistor NPN (BC337 apod.): GPIO → 1 kΩ → báze, emitor na GND, kolektor na katodu LED, anoda přes 100 Ω na 5 V.
 - **Pin:** vysílač na **GPIO 7** (`PIN_IR_TX` v `config.h`), ne GPIO 26–37 (viz [To-Do.md](To-Do.md)). Při testech čtení byl přijímač na GPIO 15.
-- **Zapojení vysílače (zvoleno):** GPIO 7 → 1 kΩ → báze BC547, emitor GND, kolektor → katoda IR LED, anoda → 100 Ω → 5 V. Vzdálenost ~1 m.
+- **Zapojení vysílače:** pin 5V na desce napětí nedával, proto se LED napájí ze **3V3**.
+  - Test bez tranzistoru: GPIO 7 → 100 Ω → anoda IR LED, katoda → GND (proud ~20 mA, dosah malý; pod 68 Ω nejít, limit pinu).
+  - Cílové zapojení: 3V3 → 47 Ω (případně 33 Ω) → anoda IR LED, katoda → kolektor BC547; GPIO 7 → 1 kΩ → báze; emitor → GND (BC547 zepředu zleva C-B-E; proud ~40–58 mA, vysílá se jen krátce). Při restartech desky kondenzátor 100 µF mezi 3V3 a GND u LED.
+  - Barvy: 1 kΩ = hnědá-černá-černá-hnědá-hnědá, 100 Ω = hnědá-černá-černá-černá-hnědá, 47 Ω = žlutá-fialová-černá-zlatá-hnědá.
 
 ## Knihovna
 
@@ -136,6 +139,7 @@ void loop() {
 ```
 GET  /api/heater                         stav (odhad)
 POST /api/heater/btn?btn=power|mode|spin|clock|eco|minus|plus
+POST /api/heater/cfg?repeat=0..5                   počet dalších IR rámců za stisk (default 3, celkem 1 + repeat; ukládá se)
 POST /api/heater/sync?on=1&mode=0|1|2    oprava odhadu, nic neposílá (0 ventilátor, 1 = I, 2 = II)
 ```
 
@@ -148,3 +152,7 @@ POST /api/heater/auto/stop                         (vypne topení)
 ```
 
 AUTO: zapne (Power + Mode×2 = režim II) pod cílem, vypne od cíl+2 °C. Při cíl+4 °C (a topení má běžet nebo teplota roste) pošle Power; pokud 3 měření po sobě neklesají ani nestagnují, zkusí znovu, max 3×, pak AUTO ukončí. Chyba čidla nebo restart AUTO ruší.
+
+## Známý problém: Mode vs. Spin
+
+Kódy Mode (`0xD90`) a Spin (`0xD88`) se liší jen ve dvou bitech; při slabém signálu přímotop občas vyhodnotí Mode jako Spin. Pomáhá silnější signál (tranzistor, zamíření) a méně opakování: `curl -X POST "http://dash.local/api/heater/cfg?repeat=0"` (1 rámec) a porovnat spolehlivost. Originální ovladač na přijímači dává jeden výpis; zda jde o jeden rámec, ukáže délka `rawData`.
