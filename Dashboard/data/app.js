@@ -816,3 +816,77 @@ function renderWatch() {
 
 loadWatch();
 setInterval(renderWatch, 10 * 60 * 1000);
+
+// ============================================================
+// TOPENI (IR)
+// ============================================================
+
+let heaterState = null;
+let heaterSyncSel = { on: false, mode: 0 };
+const HEATER_MODES = ["Ventilátor", "Topení I (1000 W)", "Topení II (2000 W)"];
+
+function fmtHm(sec) {
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
+  return h > 0 ? `${h} h ${String(m).padStart(2, "0")} min` : `${m} min`;
+}
+
+function renderHeater() {
+  const st = heaterState;
+  const pill = document.getElementById("heater-pill-state");
+  if (!pill) return;
+  if (!st) { pill.textContent = "-"; pill.className = "hpill"; return; }
+  pill.textContent = st.on ? "ON" : "OFF";
+  pill.className = "hpill" + (st.on ? " hp-on" : "");
+  const ctl = document.getElementById("heater-pill-ctl");
+  ctl.textContent = st.control === "auto" ? "Auto" : "Manual";
+  ctl.className = "hpill " + (st.control === "auto" ? "hp-auto" : "hp-man");
+  const info = document.getElementById("heater-info");
+  info.innerHTML = st.on
+    ? `<div><span class="k">Odhad režimu:</span> <b>${escapeHtml(HEATER_MODES[st.mode] || "-")}</b></div>` +
+      `<div><span class="k">Zapnuto:</span> <b>${fmtHm(st.onForS)}</b></div>` +
+      `<div><span class="k">Automatické vypnutí za:</span> <b>${fmtHm(st.manualLeftS)}</b></div>`
+    : `<div><span class="k">Odhad stavu:</span> <b>vypnuto</b></div>`;
+}
+
+async function fetchHeater() {
+  try {
+    const res = await fetch("/api/heater", { cache: "no-store" });
+    if (!res.ok) return;
+    heaterState = await res.json();
+    renderHeater();
+  } catch (e) { /* offline */ }
+}
+
+async function heaterBtn(name) {
+  try {
+    await fetch(`/api/heater/btn?btn=${encodeURIComponent(name)}`, { method: "POST", cache: "no-store" });
+  } catch (e) { /* ignore */ }
+  setTimeout(fetchHeater, 900);
+}
+
+function heaterRenderSync() {
+  document.getElementById("hs-on").className = "hbig" + (heaterSyncSel.on ? " sel-on" : "");
+  document.getElementById("hs-off").className = "hbig" + (!heaterSyncSel.on ? " sel-off" : "");
+  document.getElementById("hs-modes-wrap").style.display = heaterSyncSel.on ? "" : "none";
+  document.querySelectorAll("#heater-dlg .hchip").forEach(b => {
+    b.className = "hchip" + (Number(b.dataset.m) === heaterSyncSel.mode ? " sel" : "");
+  });
+}
+function heaterOpenSync() {
+  heaterSyncSel = { on: !!(heaterState && heaterState.on), mode: heaterState ? heaterState.mode : 0 };
+  heaterRenderSync();
+  document.getElementById("heater-dlg").hidden = false;
+}
+function heaterCloseSync() { document.getElementById("heater-dlg").hidden = true; }
+function heaterSyncPick(on) { heaterSyncSel.on = on; heaterRenderSync(); }
+function heaterSyncMode(m) { heaterSyncSel.mode = m; heaterRenderSync(); }
+async function heaterSyncSave() {
+  try {
+    await fetch(`/api/heater/sync?on=${heaterSyncSel.on ? 1 : 0}&mode=${heaterSyncSel.mode}`, { method: "POST", cache: "no-store" });
+  } catch (e) { /* ignore */ }
+  heaterCloseSync();
+  fetchHeater();
+}
+
+fetchHeater();
+setInterval(fetchHeater, 10000);

@@ -72,6 +72,75 @@
     <!-- MOON -->
     <div id="moon-card" class="moon-card"></div>
 
+    <!-- TOPENI -->
+    <div class="collapse-card heater-card" data-section="heater">
+      <button class="collapse-head" type="button" onclick="toggleSection('heater')">
+        <h2>Topení</h2>
+        <div class="heater-pills">
+          <span class="hpill" id="heater-pill-state">-</span>
+          <span class="hpill hp-man" id="heater-pill-ctl">Manual</span>
+          <span class="collapse-icon" id="icon-heater">›</span>
+        </div>
+      </button>
+      <div class="collapse-body" id="section-heater">
+        <div class="heater-inner">
+          <div class="heater-bar">
+            <div class="hseg">
+              <button type="button" disabled title="Připravujeme">Auto</button>
+              <button type="button" class="on">Manual</button>
+            </div>
+            <button type="button" class="hbtn" onclick="heaterOpenSync()">Sync</button>
+          </div>
+          <div class="remote">
+            <div class="remote-row">
+              <button type="button" class="rb pw" onclick="heaterBtn('power')" aria-label="Power">
+                <svg viewBox="0 0 24 24"><path d="M12 3v9"/><path d="M6.4 6.6a8 8 0 1 0 11.2 0"/></svg><span>Power</span>
+              </button>
+            </div>
+            <div class="remote-row">
+              <button type="button" class="rb" onclick="heaterBtn('mode')" aria-label="Mode"><b class="m">M</b><span>Režim</span></button>
+              <button type="button" class="rb" onclick="heaterBtn('spin')" aria-label="Spin">
+                <svg viewBox="0 0 24 24"><ellipse cx="12" cy="7" rx="2.2" ry="3.6"/><ellipse cx="12" cy="7" rx="2.2" ry="3.6" transform="rotate(120 12 12)"/><ellipse cx="12" cy="7" rx="2.2" ry="3.6" transform="rotate(240 12 12)"/><circle cx="12" cy="12" r="1.2"/></svg><span>Spin</span>
+              </button>
+              <button type="button" class="rb" onclick="heaterBtn('clock')" aria-label="Clock">
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3.2 2"/></svg><span>Hodiny</span>
+              </button>
+              <button type="button" class="rb" onclick="heaterBtn('eco')" aria-label="Eco">
+                <svg viewBox="0 0 24 24"><path d="M5 19C5 10 10 5 19.5 4.5 19 14 14 19 5 19z"/><path d="M5 19c3.5-4.5 7-7.5 11-9.5"/></svg><span>Eco</span>
+              </button>
+            </div>
+            <div class="remote-row">
+              <button type="button" class="rb" onclick="heaterBtn('minus')" aria-label="Minus"><svg viewBox="0 0 24 24"><path d="M6 12h12"/></svg><span>Minus</span></button>
+              <button type="button" class="rb" onclick="heaterBtn('plus')" aria-label="Plus"><svg viewBox="0 0 24 24"><path d="M6 12h12M12 6v12"/></svg><span>Plus</span></button>
+            </div>
+          </div>
+          <div class="heater-info" id="heater-info"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="heater-dlg" class="heater-scrim" hidden>
+      <div class="heater-dlg" role="dialog" aria-modal="true">
+        <h3>Synchronizovat stav topení</h3>
+        <div class="hbig-row">
+          <button type="button" class="hbig" id="hs-on" onclick="heaterSyncPick(true)">ON</button>
+          <button type="button" class="hbig" id="hs-off" onclick="heaterSyncPick(false)">OFF</button>
+        </div>
+        <div id="hs-modes-wrap">
+          <div class="hlabel">Režim topení</div>
+          <div class="hchips">
+            <button type="button" class="hchip" data-m="0" onclick="heaterSyncMode(0)">Ventilátor</button>
+            <button type="button" class="hchip" data-m="1" onclick="heaterSyncMode(1)">Topení I</button>
+            <button type="button" class="hchip" data-m="2" onclick="heaterSyncMode(2)">Topení II</button>
+          </div>
+        </div>
+        <div class="hdlg-actions">
+          <button type="button" class="hbtn" onclick="heaterCloseSync()">Zrušit</button>
+          <button type="button" class="hbtn primary" onclick="heaterSyncSave()">Uložit</button>
+        </div>
+      </div>
+    </div>
+
     <!-- DEVICES -->
     <div class="section-head">Zařízení</div>
     <div id="desktop-card"></div>

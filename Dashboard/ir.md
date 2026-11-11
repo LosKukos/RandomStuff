@@ -128,7 +128,7 @@ void loop() {
 - [ ] Odeslání IR LED ověřit na skutečném topení (dosah, počet opakování)
 - [x] Pin zvolen (GPIO 7, BC547) – fyzicky zatím nezapojeno
 - [x] Firmware modul `heater.cpp` + API (etapa 1)
-- [ ] UI sekce Topení (etapa 2)
+- [x] UI sekce Topení, ruční režim (etapa 2)
 - [ ] AUTO režim (etapa 3)
 
 ## API (etapa 1)

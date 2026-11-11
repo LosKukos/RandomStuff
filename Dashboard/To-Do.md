@@ -4,7 +4,7 @@ Stav k 2026-11-07. Odškrtnuté položky mazat, nové přidávat nahoru podle pr
 
 ## Nové
 - [x] IR topení, etapa 1: modul `heater.cpp`, API `/api/heater*`, dokumentace v `ir.md` (nezkompilováno, kód zatím neviděl překladač).
-- [ ] IR topení, etapa 2: sekce „Topení“ v UI (pod měsícem, nad „Zařízení“): sbalená ON/OFF + AUTO/MANUAL, rozbalená manuál s 7 tlačítky, Sync pop-up. Vzhled podle schváleného náhledu.
+- [x] IR topení, etapa 2 (hotovo, Auto tlačítko zatím neaktivní): sekce „Topení“ v UI (pod měsícem, nad „Zařízení“): sbalená ON/OFF + AUTO/MANUAL, rozbalená manuál s 7 tlačítky, Sync pop-up. Vzhled podle schváleného náhledu.
 - [ ] IR topení, etapa 3: AUTO (cílová teplota 15–35 °C, časovač po 15 min do 8 h, hystereze +2 °C, přehřátí +4 °C s opakováním vypnutí, selhání čidla → vypnout, oznámení na `loskukos_cmd`).
 - [ ] Zapojit IR LED: GPIO 7 → 1k → BC547, LED + 100R na 5 V, ověřit dosah (~1 m) a počet opakování.
 
