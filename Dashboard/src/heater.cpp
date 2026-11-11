@@ -192,9 +192,12 @@ void heaterAutoUpdate(int target, int minutes) {
   const int nt = heaterClampTarget(target);
   const int nm = heaterClampMinutes(minutes);
   const bool timeChanged = nm != autoMinutes;
+  const int oldTarget = autoTarget;
   autoTarget = nt;
   autoMinutes = nm;
   if (timeChanged) { autoTotalS = (uint32_t)nm * 60UL; autoStartMs = millis(); }   // odpocet znovu od ted
+  // zmena cile se projevi hned: znovu vyhodnotit posledni mereni (ne pri zasahu proti prehriti, ten pocita mereni)
+  if (nt != oldTarget && !oh.active) autoLastSeen = 0;
   persist();
   unlockMutex(heaterMutex);
 }
