@@ -846,6 +846,7 @@ function renderHeater() {
       `<div><span class="k">Zapnuto:</span> <b>${fmtHm(st.onForS)}</b></div>` +
       `<div><span class="k">Automatické vypnutí za:</span> <b>${fmtHm(st.manualLeftS)}</b></div>`
     : `<div><span class="k">Odhad stavu:</span> <b>vypnuto</b></div>`;
+  renderHeaterView();
 }
 
 async function fetchHeater() {
@@ -887,6 +888,107 @@ async function heaterSyncSave() {
   heaterCloseSync();
   fetchHeater();
 }
+
+// ---- AUTO ----
+let heaterView = "manual";
+let heaterSetup = { target: 21, minutes: 60, init: false };
+
+function fmtHms(sec) {
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+function fmtTemp(t) { return t == null ? "-" : `${t.toFixed(1).replace(".", ",")} °C`; }
+function fmtDur(min) { const h = Math.floor(min / 60), m = min % 60; return h ? `${h} h ${String(m).padStart(2, "0")} min` : `${m} min`; }
+
+const ICON_MINUS = '<svg viewBox="0 0 24 24"><path d="M6 12h12"/></svg>';
+const ICON_PLUS = '<svg viewBox="0 0 24 24"><path d="M6 12h12M12 6v12"/></svg>';
+
+function stepperHtml(label, val, fn) {
+  return `<div class="hstep"><div><div class="lbl">${label}</div><div class="val">${val}</div></div>` +
+    `<div class="hctl"><button type="button" class="hsb" onclick="${fn}(-1)" aria-label="Snížit">${ICON_MINUS}</button>` +
+    `<button type="button" class="hsb" onclick="${fn}(1)" aria-label="Zvýšit">${ICON_PLUS}</button></div></div>`;
+}
+
+function renderHeaterAuto() {
+  const el = document.getElementById("heater-auto");
+  const st = heaterState;
+  if (!el || !st) return;
+  const running = st.control === "auto";
+  if (!running && !heaterSetup.init) { heaterSetup.target = st.target; heaterSetup.minutes = st.minutes; heaterSetup.init = true; }
+  const target = running ? st.target : heaterSetup.target;
+  const minutes = running ? st.minutes : heaterSetup.minutes;
+  let html = "";
+  if (running) {
+    const pct = st.autoTotalS ? Math.round(100 * (st.autoTotalS - st.autoLeftS) / st.autoTotalS) : 0;
+    html += `<div class="hrun"><div class="hrun-top"><div><div class="lbl">Do konce AUTO</div><div class="big">${fmtHms(st.autoLeftS)}</div></div>` +
+      `<div style="text-align:right;color:${st.on ? "#22c55e" : "#94a3b8"};font-weight:900;font-size:.8rem;letter-spacing:.07em;text-transform:uppercase">${st.on ? "Topí · " + (st.mode === 2 ? "režim II" : st.mode === 1 ? "režim I" : "ventilátor") : "Čeká"}</div></div>` +
+      `<div class="hbar"><i style="width:${pct}%"></i></div>` +
+      `<div class="hmini-row"><div class="hmini"><span class="lbl">Teď (DHT11)</span><b>${fmtTemp(st.temp)}</b></div>` +
+      `<div class="hmini"><span class="lbl">Cíl</span><b>${target} °C</b></div>` +
+      `<div class="hmini"><span class="lbl">Vypne při</span><b>${st.offAt} °C</b></div></div></div>`;
+  }
+  html += `<div class="hsteps">${stepperHtml("Cílová teplota", target + " °C", "heaterStepTarget")}${stepperHtml("Časovač", fmtDur(minutes), "heaterStepTime")}</div>`;
+  if (!running) {
+    html += `<div class="heater-info" style="margin-top:16px"><div><span class="k">Teď uvnitř (DHT11):</span> <b>${fmtTemp(st.temp)}</b></div>` +
+      `<div><span class="k">Zapne při:</span> <b>pod ${target} °C</b> · <span class="k">vypne při:</span> <b>${target + 2} °C a víc</b></div></div>` +
+      `<button type="button" class="hbtn primary hwide" onclick="heaterAutoStart()">Start</button>`;
+  } else {
+    html += `<button type="button" class="hbtn danger hwide" onclick="heaterAutoStop()">Stop a vypnout</button>`;
+  }
+  el.innerHTML = html;
+}
+
+function renderHeaterView() {
+  const st = heaterState;
+  if (st && st.control === "auto") heaterView = "auto";
+  document.getElementById("hseg-auto").className = heaterView === "auto" ? "on" : "";
+  document.getElementById("hseg-man").className = heaterView === "manual" ? "on" : "";
+  document.getElementById("heater-manual").style.display = heaterView === "manual" ? "" : "none";
+  document.getElementById("heater-auto").style.display = heaterView === "auto" ? "" : "none";
+  if (heaterView === "auto") renderHeaterAuto();
+  const al = document.getElementById("heater-alert");
+  if (al) {
+    const a = st && st.alert;
+    al.innerHTML = a ? `<div class="heater-alert ${escapeHtml(a.kind)}"><div><b>${escapeHtml(a.title)}</b>${escapeHtml(a.text)}</div></div>` : "";
+  }
+}
+
+async function heaterSetView(v) {
+  if (v === "manual" && heaterState && heaterState.control === "auto") {
+    if (!confirm("Zastavit AUTO a vypnout topení?")) return;
+    await heaterAutoStop();
+  }
+  heaterView = v;
+  renderHeaterView();
+}
+
+function heaterStepTarget(d) {
+  const running = heaterState && heaterState.control === "auto";
+  const cur = running ? heaterState.target : heaterSetup.target;
+  const v = Math.min(35, Math.max(15, cur + d));
+  if (running) { heaterAutoUpdate(v, heaterState.minutes); } else { heaterSetup.target = v; renderHeaterAuto(); }
+}
+function heaterStepTime(d) {
+  const running = heaterState && heaterState.control === "auto";
+  const cur = running ? heaterState.minutes : heaterSetup.minutes;
+  const v = Math.min(480, Math.max(15, cur + 15 * d));
+  if (running) { heaterAutoUpdate(heaterState.target, v); } else { heaterSetup.minutes = v; renderHeaterAuto(); }
+}
+async function heaterPost(path) {
+  try { await fetch(path, { method: "POST", cache: "no-store" }); } catch (e) { /* ignore */ }
+  await fetchHeater();
+}
+async function heaterAutoStart() {
+  try {
+    const res = await fetch(`/api/heater/auto/start?target=${heaterSetup.target}&minutes=${heaterSetup.minutes}`, { method: "POST", cache: "no-store" });
+    if (res.status === 409) alert("Čidlo nedává platnou teplotu, AUTO nelze spustit.");
+  } catch (e) { /* ignore */ }
+  await fetchHeater();
+}
+function heaterAutoUpdate(t, m) { return heaterPost(`/api/heater/auto/update?target=${t}&minutes=${m}`); }
+function heaterAutoStop() { return heaterPost("/api/heater/auto/stop"); }
+
+setInterval(() => { if (heaterState && heaterState.control === "auto" && heaterState.autoLeftS > 0) { heaterState.autoLeftS--; renderHeaterAuto(); } }, 1000);
 
 fetchHeater();
 setInterval(fetchHeater, 10000);

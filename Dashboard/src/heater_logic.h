@@ -43,3 +43,56 @@ static inline bool heaterBtnFromName(const char *s, HeaterBtn &out) {
   }
   return false;
 }
+
+// ---------------- AUTO ----------------
+#define HEATER_AUTO_HYST        2.0f   // vypne pri cil + 2
+#define HEATER_AUTO_OVERHEAT    4.0f   // zasah pri cil + 4
+#define HEATER_AUTO_MIN_TARGET  15
+#define HEATER_AUTO_MAX_TARGET  35
+#define HEATER_AUTO_STEP_MIN    15
+#define HEATER_AUTO_MAX_MIN     480
+
+enum AutoAct : uint8_t { AA_NONE = 0, AA_ON, AA_OFF };
+
+static inline AutoAct heaterAutoDecide(bool on, float temp, float target) {
+  if (!on && temp < target) return AA_ON;
+  if (on && temp >= target + HEATER_AUTO_HYST) return AA_OFF;
+  return AA_NONE;
+}
+
+struct HeaterOverheat {
+  bool    active;
+  uint8_t attempts;   // 1..3
+  float   base;       // teplota pri poslednim pokusu
+  uint8_t readings;   // nova mereni od posledniho pokusu
+};
+
+enum OhAct : uint8_t { OH_NONE = 0, OH_PRESS, OH_FAIL };
+
+// Volat pro kazde nove mereni. OH_PRESS = stisknout Power (a povazovat topeni za vypnute),
+// OH_FAIL = 3 pokusy bez uspechu.
+static inline OhAct heaterOverheatStep(HeaterOverheat &o, float temp, float prev, float target, bool estOn) {
+  if (!o.active) {
+    const bool trigger = temp >= target + HEATER_AUTO_OVERHEAT && (estOn || temp > prev);
+    if (!trigger) return OH_NONE;
+    o.active = true; o.attempts = 1; o.base = temp; o.readings = 0;
+    return OH_PRESS;
+  }
+  o.readings++;
+  if (temp < o.base) { o.active = false; o.attempts = 0; return OH_NONE; }
+  if (o.readings >= 3) {
+    if (temp <= o.base) { o.active = false; o.attempts = 0; return OH_NONE; }
+    if (o.attempts >= 3) { o.active = false; return OH_FAIL; }
+    o.attempts++; o.base = temp; o.readings = 0;
+    return OH_PRESS;
+  }
+  return OH_NONE;
+}
+
+static inline int heaterClampTarget(int t) {
+  return t < HEATER_AUTO_MIN_TARGET ? HEATER_AUTO_MIN_TARGET : t > HEATER_AUTO_MAX_TARGET ? HEATER_AUTO_MAX_TARGET : t;
+}
+static inline int heaterClampMinutes(int m) {
+  m = (m / HEATER_AUTO_STEP_MIN) * HEATER_AUTO_STEP_MIN;
+  return m < HEATER_AUTO_STEP_MIN ? HEATER_AUTO_STEP_MIN : m > HEATER_AUTO_MAX_MIN ? HEATER_AUTO_MAX_MIN : m;
+}

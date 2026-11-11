@@ -82,15 +82,17 @@
           <span class="collapse-icon" id="icon-heater">›</span>
         </div>
       </button>
+      <div id="heater-alert"></div>
       <div class="collapse-body" id="section-heater">
         <div class="heater-inner">
           <div class="heater-bar">
             <div class="hseg">
-              <button type="button" disabled title="Připravujeme">Auto</button>
-              <button type="button" class="on">Manual</button>
+              <button type="button" id="hseg-auto" onclick="heaterSetView('auto')">Auto</button>
+              <button type="button" id="hseg-man" onclick="heaterSetView('manual')">Manual</button>
             </div>
             <button type="button" class="hbtn" onclick="heaterOpenSync()">Sync</button>
           </div>
+          <div id="heater-manual">
           <div class="remote">
             <div class="remote-row">
               <button type="button" class="rb pw" onclick="heaterBtn('power')" aria-label="Power">
@@ -115,6 +117,8 @@
             </div>
           </div>
           <div class="heater-info" id="heater-info"></div>
+          </div>
+          <div id="heater-auto"></div>
         </div>
       </div>
     </div>

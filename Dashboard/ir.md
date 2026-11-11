@@ -129,7 +129,7 @@ void loop() {
 - [x] Pin zvolen (GPIO 7, BC547) – fyzicky zatím nezapojeno
 - [x] Firmware modul `heater.cpp` + API (etapa 1)
 - [x] UI sekce Topení, ruční režim (etapa 2)
-- [ ] AUTO režim (etapa 3)
+- [x] AUTO režim (etapa 3)
 
 ## API (etapa 1)
 
@@ -139,4 +139,12 @@ POST /api/heater/btn?btn=power|mode|spin|clock|eco|minus|plus
 POST /api/heater/sync?on=1&mode=0|1|2    oprava odhadu, nic neposílá (0 ventilátor, 1 = I, 2 = II)
 ```
 
-Po výpadku napájení se topení bere jako vypnuté; po crashi/WDT/flashi se použije uložený odhad (`/heater.json`). Ruční režim vypíná po 4 h. Všechna oznámení jdou na `loskukos_cmd`.
+Po výpadku napájení se topení bere jako vypnuté; po crashi/WDT/flashi se použije uložený odhad (`/heater.json`). Ruční režim vypíná po 4 h. Oznámení (`loskukos_cmd`) chodí jen u AUTO (start, změna, zapnutí/vypnutí, konec, chyba čidla, přehřátí) a při limitu ručního režimu; ruční tlačítka a Sync ntfy neposílají.
+
+```
+POST /api/heater/auto/start?target=21&minutes=60   (409 = čidlo nemá platnou teplotu)
+POST /api/heater/auto/update?target=..&minutes=..  (změna času restartuje odpočet)
+POST /api/heater/auto/stop                         (vypne topení)
+```
+
+AUTO: zapne (Power + Mode×2 = režim II) pod cílem, vypne od cíl+2 °C. Při cíl+4 °C (a topení má běžet nebo teplota roste) pošle Power; pokud 3 měření po sobě neklesají ani nestagnují, zkusí znovu, max 3×, pak AUTO ukončí. Chyba čidla nebo restart AUTO ruší.

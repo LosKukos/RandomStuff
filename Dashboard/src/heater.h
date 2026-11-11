@@ -11,3 +11,9 @@ void heaterTask(void *pv);               // vlastni task (fronta prikazu + hlida
 bool heaterSendButton(HeaterBtn b);      // zaradi odeslani do fronty (neblokuje), false = plna fronta
 void heaterSync(bool on, uint8_t mode);  // jen opravi odhad, nic neposila
 void heaterStatus(JsonDocument &doc);    // JSON pro GET /api/heater
+
+// AUTO: udrzuje teplotu z indoor DHT (zapne pod cil, vypne od cil + 2), po case se vypne
+bool heaterAutoStart(int target, int minutes);   // false = chybi platne cidlo
+void heaterAutoUpdate(int target, int minutes);  // za behu; zmena casu restartuje odpocet
+void heaterAutoStop();                           // zastavi a vypne topeni
+void heaterClearAlert();

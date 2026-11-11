@@ -22,15 +22,33 @@ static const uint16_t IR_CODES[HB_COUNT] = {
   0xDC6   // plus
 };
 
+#define CMD_FORCE_OFF 0x80   // Power + po odeslani povazovat topeni za vypnute (zasah proti prehriti)
+#define NOTE_LEN 140
+#define CLIMATE_STALE_MS 300000UL
+
 static IRsend irsend(PIN_IR_TX);
 static QueueHandle_t cmdQueue = nullptr;
+static QueueHandle_t noteQueue = nullptr;   // ntfy se posila jen z tasku (TLS), ne z async_tcp
 static SemaphoreHandle_t heaterMutex = nullptr;
 
 static HeaterEst est = {false, HM_FAN};
 static uint32_t  onSinceMs = 0;      // millis() zapnuti (0 = vypnuto)
-static uint32_t  lastSentMs = 0;
 static bool      lastSendOk = true;
-static volatile bool syncNotePending = false;   // ntfy z tasku, ne z async_tcp handleru
+
+// AUTO
+static bool      autoActive = false;
+static int       autoTarget = 21;
+static int       autoMinutes = 60;       // nastaveny cas (default i pro dalsi Start)
+static uint32_t  autoStartMs = 0;
+static uint32_t  autoTotalS = 0;
+static uint32_t  autoLastSeen = 0;       // updatedAtMs naposledy zpracovaneho mereni
+static float     autoPrevTemp = 0;
+static HeaterOverheat oh = {false, 0, 0, 0};
+
+// upozorneni v UI (do dalsi akce uzivatele)
+static char alertKind[8] = "";
+static char alertTitle[40] = "";
+static char alertText[120] = "";
 
 static const char *modeText(uint8_t m) {
   return m == HM_I ? "Topeni I (1000 W)" : m == HM_II ? "Topeni II (2000 W)" : "Ventilator";
@@ -42,42 +60,69 @@ static void persist() {
   JsonDocument d;
   d["on"] = est.on;
   d["mode"] = est.mode;
+  d["target"] = autoTarget;
+  d["minutes"] = autoMinutes;
   serializeJson(d, f);
   f.close();
 }
 
-static void notify(const String &body) {
-  ntfyPostQuiet("Topeni", body, "default", NTFY_CMD_TOPIC);
+static void note(const String &body) {
+  if (!noteQueue) return;
+  char buf[NOTE_LEN];
+  body.substring(0, NOTE_LEN - 1).toCharArray(buf, NOTE_LEN);
+  xQueueSend(noteQueue, buf, 0);
+}
+
+// volat s drzenym heaterMutex
+static void setAlertLocked(const char *kind, const char *title, const String &text) {
+  strlcpy(alertKind, kind, sizeof(alertKind));
+  strlcpy(alertTitle, title, sizeof(alertTitle));
+  strlcpy(alertText, text.c_str(), sizeof(alertText));
+}
+static void clearAlertLocked() { alertKind[0] = alertTitle[0] = alertText[0] = 0; }
+
+static bool enqueue(uint8_t v) {
+  return cmdQueue && xQueueSend(cmdQueue, &v, 0) == pdTRUE;
 }
 
 void initHeater() {
   heaterMutex = xSemaphoreCreateMutex();
-  cmdQueue = xQueueCreate(8, sizeof(uint8_t));
+  cmdQueue = xQueueCreate(10, sizeof(uint8_t));
+  noteQueue = xQueueCreate(6, NOTE_LEN);
   irsend.begin();
 
-  // Po vypadku napajeni je topeni (stejny okruh) vypnute. Po jinem restartu (crash/WDT/flash)
-  // bezelo dal, tak vezmeme ulozeny odhad.
-  if (esp_reset_reason() != ESP_RST_POWERON) {
-    File f = LittleFS.open("/heater.json", "r");
-    if (f) {
-      JsonDocument d;
-      if (!deserializeJson(d, f)) {
+  const bool powerOn = esp_reset_reason() == ESP_RST_POWERON;
+  bool hadAuto = false;
+  File f = LittleFS.open("/heater.json", "r");
+  if (f) {
+    JsonDocument d;
+    if (!deserializeJson(d, f)) {
+      autoTarget = heaterClampTarget(d["target"] | 21);
+      autoMinutes = heaterClampMinutes(d["minutes"] | 60);
+      // Po vypadku napajeni je topeni (stejny okruh) vypnute. Po jinem restartu
+      // (crash/WDT/flash) bezelo dal, tak vezmeme ulozeny odhad.
+      if (!powerOn) {
         est.on = d["on"] | false;
         est.mode = d["mode"] | 0;
         if (est.mode > HM_II) est.mode = HM_FAN;
         if (est.on) onSinceMs = millis();   // limit se pocita znovu od restartu
+        hadAuto = est.on;
       }
-      f.close();
     }
-  } else {
+    f.close();
+  }
+  if (powerOn) {
+    setAlertLocked("info", "Restart po výpadku napájení", "Topení považuji za vypnuté, AUTO zrušeno.");
     persist();
+  } else if (hadAuto) {
+    setAlertLocked("warn", "Restart zařízení", "AUTO zrušeno, topení podle posledního odhadu.");
   }
 }
 
 bool heaterSendButton(HeaterBtn b) {
-  if (!cmdQueue || b >= HB_COUNT) return false;
-  const uint8_t v = (uint8_t)b;
-  return xQueueSend(cmdQueue, &v, 0) == pdTRUE;
+  if (b >= HB_COUNT || autoActive) return false;
+  if (lockMutex(heaterMutex, pdMS_TO_TICKS(200))) { clearAlertLocked(); unlockMutex(heaterMutex); }
+  return enqueue((uint8_t)b);
 }
 
 void heaterSync(bool on, uint8_t mode) {
@@ -86,77 +131,232 @@ void heaterSync(bool on, uint8_t mode) {
   est.on = on;
   est.mode = mode > HM_II ? HM_FAN : mode;
   onSinceMs = on ? millis() : 0;
+  clearAlertLocked();
   persist();
   unlockMutex(heaterMutex);
-  syncNotePending = true;
+}
+
+void heaterClearAlert() {
+  if (lockMutex(heaterMutex, pdMS_TO_TICKS(200))) { clearAlertLocked(); unlockMutex(heaterMutex); }
+}
+
+static bool readIndoor(float &temp, uint32_t &updatedAt) {
+  bool ok = false;
+  if (lockMutex(climateMutex, pdMS_TO_TICKS(200))) {
+    ok = climate.indoor.valid && climate.indoor.updatedAtMs != 0 &&
+         (millis() - climate.indoor.updatedAtMs) < CLIMATE_STALE_MS;
+    temp = climate.indoor.temp;
+    updatedAt = climate.indoor.updatedAtMs;
+    unlockMutex(climateMutex);
+  }
+  return ok;
+}
+
+bool heaterAutoStart(int target, int minutes) {
+  float t; uint32_t u;
+  if (!readIndoor(t, u)) return false;
+  lockMutex(heaterMutex, pdMS_TO_TICKS(200));
+  autoTarget = heaterClampTarget(target);
+  autoMinutes = heaterClampMinutes(minutes);
+  autoTotalS = (uint32_t)autoMinutes * 60UL;
+  autoStartMs = millis();
+  autoLastSeen = 0;
+  autoPrevTemp = t;
+  oh = {false, 0, 0, 0};
+  autoActive = true;
+  clearAlertLocked();
+  persist();
+  const bool needMode = est.on && est.mode != HM_II;
+  const uint8_t presses = heaterModePresses(est.mode, HM_II);
+  unlockMutex(heaterMutex);
+  if (needMode) for (uint8_t i = 0; i < presses; i++) enqueue(HB_MODE);
+  note(String("AUTO start: cil ") + autoTarget + " C, " + autoMinutes + " min");
+  return true;
+}
+
+void heaterAutoUpdate(int target, int minutes) {
+  if (!autoActive) return;
+  lockMutex(heaterMutex, pdMS_TO_TICKS(200));
+  const int nt = heaterClampTarget(target);
+  const int nm = heaterClampMinutes(minutes);
+  const bool timeChanged = nm != autoMinutes;
+  autoTarget = nt;
+  autoMinutes = nm;
+  if (timeChanged) { autoTotalS = (uint32_t)nm * 60UL; autoStartMs = millis(); }   // odpocet znovu od ted
+  persist();
+  unlockMutex(heaterMutex);
+  note(String("AUTO zmena: cil ") + nt + " C, " + nm + " min");
+}
+
+// konec AUTO (volat s drzenym mutexem); vrati true kdyz je treba vypnout topeni
+static bool endAutoLocked() {
+  autoActive = false;
+  oh = {false, 0, 0, 0};
+  return est.on;
+}
+
+void heaterAutoStop() {
+  if (!autoActive) return;
+  lockMutex(heaterMutex, pdMS_TO_TICKS(200));
+  const bool needOff = endAutoLocked();
+  unlockMutex(heaterMutex);
+  if (needOff) enqueue(HB_POWER);
+  note("AUTO zastaveno uzivatelem, topeni vypnuto");
 }
 
 void heaterStatus(JsonDocument &doc) {
   bool on = false; uint8_t mode = 0; uint32_t since = 0;
+  bool au = false; int tgt = 0, mins = 0; uint32_t startMs = 0, total = 0;
+  bool ohActive = false; uint8_t ohAtt = 0;
+  char ak[8] = "", at[40] = "", ax[120] = "";
   if (heaterMutex && lockMutex(heaterMutex, pdMS_TO_TICKS(200))) {
     on = est.on; mode = est.mode; since = onSinceMs;
+    au = autoActive; tgt = autoTarget; mins = autoMinutes; startMs = autoStartMs; total = autoTotalS;
+    ohActive = oh.active; ohAtt = oh.attempts;
+    strlcpy(ak, alertKind, sizeof(ak)); strlcpy(at, alertTitle, sizeof(at)); strlcpy(ax, alertText, sizeof(ax));
     unlockMutex(heaterMutex);
   }
   doc["on"] = on;
   doc["mode"] = mode;
   doc["modeText"] = modeText(mode);
-  doc["control"] = "manual";
+  doc["control"] = au ? "auto" : "manual";
   const uint32_t onS = (on && since) ? (millis() - since) / 1000UL : 0;
   doc["onForS"] = onS;
-  doc["manualLeftS"] = on ? (onS >= HEATER_MANUAL_LIMIT_S ? 0 : HEATER_MANUAL_LIMIT_S - onS) : 0;
+  doc["manualLeftS"] = (on && !au) ? (onS >= HEATER_MANUAL_LIMIT_S ? 0 : HEATER_MANUAL_LIMIT_S - onS) : 0;
   doc["lastSendOk"] = lastSendOk;
+
+  doc["target"] = tgt;
+  doc["minutes"] = mins;
+  doc["offAt"] = tgt + (int)HEATER_AUTO_HYST;
+  float t = 0; uint32_t u = 0;
+  if (readIndoor(t, u)) doc["temp"] = t; else doc["temp"] = nullptr;
+  if (au) {
+    const uint32_t el = (millis() - startMs) / 1000UL;
+    doc["autoLeftS"] = el >= total ? 0 : total - el;
+    doc["autoTotalS"] = total;
+    if (ohActive) doc["overheatAttempt"] = ohAtt;
+  }
+  if (ak[0]) {
+    JsonObject a = doc["alert"].to<JsonObject>();
+    a["kind"] = ak; a["title"] = at; a["text"] = ax;
+  }
 }
 
-static void sendOne(HeaterBtn b) {
+static void sendOne(uint8_t v) {
+  const HeaterBtn b = (HeaterBtn)(v & 0x7F);
   bcMark(BT_HEATER, BS_HEATER_SEND);
   irsend.sendSymphony(IR_CODES[b], 12, 3);
-  lastSentMs = millis();
   lastSendOk = true;
   logLine(String("[HEATER] IR sent: ") + heaterBtnName(b));
   bcMark(BT_HEATER, BS_IDLE);
 }
 
+static String fmt1(float t) { return String(t, 1); }
+
+// vyhodnoceni AUTO pri novem mereni
+static void autoEvaluate() {
+  float t; uint32_t u;
+  const bool ok = readIndoor(t, u);
+
+  lockMutex(heaterMutex, pdMS_TO_TICKS(500));
+  if (!autoActive) { unlockMutex(heaterMutex); return; }
+
+  // konec casu
+  if ((millis() - autoStartMs) / 1000UL >= autoTotalS) {
+    const bool needOff = endAutoLocked();
+    unlockMutex(heaterMutex);
+    if (needOff) enqueue(HB_POWER);
+    note("AUTO dobehlo, topeni vypnuto");
+    return;
+  }
+  // chyba cidla
+  if (!ok) {
+    const bool needOff = endAutoLocked();
+    setAlertLocked("bad", "Chyba čidla", "AUTO ukončeno, DHT11 neodpovídá. Topení vypnuto.");
+    unlockMutex(heaterMutex);
+    if (needOff) enqueue(HB_POWER);
+    note("Chyba cidla: AUTO ukonceno, topeni vypnuto");
+    return;
+  }
+  if (u == autoLastSeen) { unlockMutex(heaterMutex); return; }   // zadne nove mereni
+  autoLastSeen = u;
+
+  const float prev = autoPrevTemp;
+  autoPrevTemp = t;
+  const int target = autoTarget;
+
+  const OhAct oa = heaterOverheatStep(oh, t, prev, (float)target, est.on);
+  if (oa == OH_PRESS) {
+    const uint8_t att = oh.attempts;
+    clearAlertLocked();
+    setAlertLocked("bad", "Přehřátí", fmt1(t) + " °C při cíli " + target + " °C. Vypínám znovu (pokus " + att + " ze 3).");
+    unlockMutex(heaterMutex);
+    enqueue(HB_POWER | CMD_FORCE_OFF);
+    note(String("Prehrati: ") + fmt1(t) + " C pri cili " + target + " C, vypinam (pokus " + att + "/3)");
+    return;
+  }
+  if (oa == OH_FAIL) {
+    endAutoLocked();
+    setAlertLocked("bad", "Přehřátí", fmt1(t) + " °C při cíli " + target + " °C. Vypnutí selhalo, AUTO ukončeno.");
+    unlockMutex(heaterMutex);
+    note(String("PREHRATI: ") + fmt1(t) + " C, vypnuti selhalo 3x, AUTO ukonceno. Zkontroluj topeni!");
+    return;
+  }
+  if (oh.active) { unlockMutex(heaterMutex); return; }   // cekame na vysledek zasahu
+
+  const AutoAct act = heaterAutoDecide(est.on, t, (float)target);
+  unlockMutex(heaterMutex);
+  if (act == AA_ON) {
+    enqueue(HB_POWER); enqueue(HB_MODE); enqueue(HB_MODE);   // Power -> ventilator -> I -> II
+    note(String("AUTO: zapinam (") + fmt1(t) + " C < " + target + " C)");
+  } else if (act == AA_OFF) {
+    enqueue(HB_POWER);
+    note(String("AUTO: vypinam (") + fmt1(t) + " C)");
+  }
+}
+
 void heaterTask(void *pv) {
   logLine(F("[TASK][HEATER] started"));
-  uint32_t lastLimitCheck = 0;
+  uint32_t lastCheck = 0;
   for (;;) {
     uint8_t v;
     if (xQueueReceive(cmdQueue, &v, pdMS_TO_TICKS(500)) == pdTRUE) {
-      const HeaterBtn b = (HeaterBtn)v;
-      sendOne(b);
+      const HeaterBtn b = (HeaterBtn)(v & 0x7F);
+      const bool force = (v & CMD_FORCE_OFF) != 0;
+      sendOne(v);
       lockMutex(heaterMutex, pdMS_TO_TICKS(500));
       const bool wasOn = est.on;
-      heaterApplyButton(est, b);
+      if (force) { est.on = false; est.mode = HM_FAN; }
+      else heaterApplyButton(est, b);
       if (est.on && !wasOn) onSinceMs = millis();
       if (!est.on) onSinceMs = 0;
       persist();
-      const HeaterEst now = est;
       unlockMutex(heaterMutex);
-
-      String msg = String("Rucne: ") + heaterBtnName(b);
-      if (b == HB_POWER || b == HB_MODE) msg += String(" -> ") + (now.on ? modeText(now.mode) : "OFF");
-      notify(msg);
       vTaskDelay(pdMS_TO_TICKS(400));   // mezera mezi odeslanimi
     }
 
-    if (syncNotePending) {
-      syncNotePending = false;
-      HeaterEst now = est;
-      notify(String("Sync: ") + (now.on ? String("ON, ") + modeText(now.mode) : String("OFF")));
+    // oznameni (TLS)
+    char buf[NOTE_LEN];
+    while (xQueueReceive(noteQueue, buf, 0) == pdTRUE) {
+      ntfyPostQuiet("Topeni", String(buf), "default", NTFY_CMD_TOPIC);
     }
 
-    // Limit rucniho rezimu: po 4 h vypnout
-    if (millis() - lastLimitCheck >= 5000) {
-      lastLimitCheck = millis();
+    if (millis() - lastCheck >= 5000) {
+      lastCheck = millis();
+
+      if (uxQueueMessagesWaiting(cmdQueue) == 0) autoEvaluate();
+
+      // limit rucniho rezimu: po 4 h vypnout
       bool over = false;
       if (lockMutex(heaterMutex, pdMS_TO_TICKS(200))) {
-        over = est.on && onSinceMs && (millis() - onSinceMs) / 1000UL >= HEATER_MANUAL_LIMIT_S;
+        over = !autoActive && est.on && onSinceMs && (millis() - onSinceMs) / 1000UL >= HEATER_MANUAL_LIMIT_S;
+        if (over) setAlertLocked("warn", "Limit v manuálu", "Topení bylo 4 hodiny zapnuté, automaticky vypnuto.");
         unlockMutex(heaterMutex);
       }
       if (over) {
         logLine(F("[HEATER] manual limit reached, power off"));
-        heaterSendButton(HB_POWER);
-        notify("Limit manualu (4 h): topeni automaticky vypnuto");
+        enqueue(HB_POWER);
+        note("Limit manualu (4 h): topeni automaticky vypnuto");
       }
     }
   }

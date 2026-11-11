@@ -294,6 +294,29 @@ void startDashboardServer() {
     doc["ok"] = ok;
     sendJsonResponse(request, known ? (ok ? 202 : 503) : 400, doc);
   });
+  // AUTO: start?target=21&minutes=60, update (zmena za behu), stop
+  server.on("/api/heater/auto/start", HTTP_POST, [](AsyncWebServerRequest *request) {
+    const int t = request->hasParam("target") ? request->getParam("target")->value().toInt() : 21;
+    const int m = request->hasParam("minutes") ? request->getParam("minutes")->value().toInt() : 60;
+    JsonDocument doc;
+    const bool ok = heaterAutoStart(t, m);
+    doc["ok"] = ok;
+    sendJsonResponse(request, ok ? 200 : 409, doc);
+  });
+  server.on("/api/heater/auto/update", HTTP_POST, [](AsyncWebServerRequest *request) {
+    const int t = request->hasParam("target") ? request->getParam("target")->value().toInt() : 21;
+    const int m = request->hasParam("minutes") ? request->getParam("minutes")->value().toInt() : 60;
+    heaterAutoUpdate(t, m);
+    JsonDocument doc;
+    doc["ok"] = true;
+    sendJsonResponse(request, 200, doc);
+  });
+  server.on("/api/heater/auto/stop", HTTP_POST, [](AsyncWebServerRequest *request) {
+    heaterAutoStop();
+    JsonDocument doc;
+    doc["ok"] = true;
+    sendJsonResponse(request, 200, doc);
+  });
   server.on("/api/heater/sync", HTTP_POST, [](AsyncWebServerRequest *request) {
     JsonDocument doc;
     if (!request->hasParam("on")) {
