@@ -2,7 +2,7 @@
 
 Domácí dashboard na ESP32-S3: network-ops panel (WLED, Minecraft controller, panic-button), denní svátková hláška na Discord, SOS/panic alarm, klima (DHT11/DHT22), IR ovládání přímotopu, počasí + měsíc, hodinový report na ntfy a Wake-on-LAN + health check desktopu.
 
-Stav k 2026-11-11. Aktuální rozpracované věci a pravidla pro práci jsou v [HANDOFF.md](HANDOFF.md), úkoly v [To-Do.md](To-Do.md), tento dokument popisuje strukturu kódu. IR ovládání topení: [ir.md](ir.md), RFID čtečka: [rfid.md](rfid.md).
+Stav k 2026-11-13. Aktuální rozpracované věci a pravidla pro práci jsou v [HANDOFF.md](HANDOFF.md), úkoly v [To-Do.md](To-Do.md), tento dokument popisuje strukturu kódu. IR ovládání topení: [ir.md](ir.md), RFID čtečka: [rfid.md](rfid.md).
 
 * * *
 
@@ -38,7 +38,7 @@ Za běhu vznikají na LittleFS ještě `/state.json` (`last_sent`), `/watch.json
 
 | Soubor               | Co řeší                                                                                                                                  |
 |----------------------|------------------------------------------------------------------------------------------------------------------------------------------|
-| `config.h/.cpp`      | Defines (piny, intervaly, hosty, topicy, souřadnice) v `.h`; WiFi, Discord webhook a role ID se do `.cpp` berou ze `src/secrets.h` (není v gitu, vzor `secrets.h.example`).                    |
+| `config.h/.cpp`      | Defines (piny, intervaly, hosty, topicy, souřadnice) v `.h`; WiFi, Discord webhook a role ID se do `.cpp` berou ze `src/secrets.h` (není v gitu, vzor neexistuje: defines `SECRET_WIFI_SSID`, `SECRET_WIFI_PASSWORD`, `SECRET_DISCORD_WEBHOOK`, `SECRET_DISCORD_ROLE_ID`).                    |
 | `state.h/.cpp`       | Mutexy, boot counter (RTC), flagy s get/set, struktury `DeviceState`, `AlarmState`, `WeatherState`, `ClimateState`, `DesktopState`.      |
 | `log_util.h/.cpp`    | `logLine`/`logValue`/`printDivider` – Serial výstup chráněný `serialMutex`.                                                              |
 | `breadcrumbs.h/.cpp` | RTC breadcrumbs: `bcMark()` kroky tasků, heap/stack snapshot, hodinový vzorek heapu, souhrn předchozího běhu (viz [RTC breadcrumbs](#rtc-breadcrumbs)). |
@@ -288,7 +288,7 @@ OTA, zabezpečení ntfy topicu, boot zpráva na ntfy, varování na vlhkost. Tla
 
 ## Známé limity
 
-- **Credentials:** jsou v `src/secrets.h` mimo git. Ve veřejné historii repa ale zůstávají staré hodnoty (WiFi heslo, Discord webhook, role ID), webhook už je zneplatněný (smazal ho GitHub scanner 2026-11-04), WiFi heslo je třeba změnit na routeru. Názvy ntfy topiců jsou v kódu a repo je veřejné, takže kdokoli může psát na `NTFY_CMD_TOPIC` (WOL) a číst reporty.
+- **Credentials:** jsou v `src/secrets.h` mimo git. Ve veřejné historii repa ale zůstávají staré hodnoty (WiFi heslo, Discord webhook, role ID), webhook je zneplatněný (smazal ho GitHub scanner 2026-11-04) a WiFi heslo bylo změněno na routeru. Názvy ntfy topiců jsou v kódu a repo je veřejné, takže kdokoli může psát na `NTFY_CMD_TOPIC` (WOL) a číst reporty.
 - **Blokující handlery v `async_tcp`:** `/api/panic` (první ntfy, TLS), `/api/send` (Discord TLS), `/api/update-time` (`getLocalTime`, default 5 s), `/api/wled/*` (HTTP timeouty 1,5 s, po POST navíc `pollWLED()`; `identify` dělá dva POSTy + `delay(350)`). Porušuje pravidlo „v async handlerech neblokovat“ z HANDOFF a hrozí task WDT při pomalé síti. Správný vzor je `/api/refresh`.
 - **TLS bez ověření certifikátu:** všude `setInsecure()` (Discord, ntfy, Open-Meteo).
 - **Žádná autentizace:** všechny endpointy i celý LittleFS root jsou dostupné komukoli v síti / přes ZeroTier.
@@ -296,6 +296,6 @@ OTA, zabezpečení ntfy topicu, boot zpráva na ntfy, varování na vlhkost. Tla
 - **Duplicitní konstanty:** práh mrazu 1,0 °C je natvrdo v `tasks.cpp` (report) i `app.js` (UI); SOS topic je natvrdo v `ntfy.cpp`; ZeroTier IP je v `app.js` i `remote_setup.bat`.
 - **Předpověď:** `WEATHER_FORECAST_HOURS` je 168, ale s `forecast_days=2` API vrací nejvýš 48 hodin a JSON ořezává na 48.
 - **Perzistence:** historie trendu je jen v RAM, `bootCounter` i breadcrumbs se nulují při výpadku napájení.
-- **Nezkompilováno:** breadcrumbs, vlastní DHT čtečka (ta je od 2026-11-07 nahraná) a hlavně modul topení nebyly zkompilované v PlatformIO a topení nebylo vyzkoušené na zařízení (IR LED zatím nezapojená).
-- **Otevřené:** opakované restarty kvůli watchdogu (2026-11-03 a znovu po cca 10 h), TFT sloučení, rozhodnutí o mobilním zrcadlení přes ntfy a úprava vzhledu UI: viz [HANDOFF.md](HANDOFF.md).
+- **Ověřeno na zařízení:** breadcrumbs, vlastní DHT čtečka, modul topení (včetně dosahu IR po přidání tranzistoru), WOL, health check, sledované svátky i `NTFY_CMD_TOPIC`. Watchdog restarty vyřešené změnou DHT čtení.
+- **Otevřené:** blokující handlery v `async_tcp` (viz výše), TFT sloučení, mobilní zrcadlení přes ntfy a úprava vzhledu UI včetně grafů: viz [HANDOFF.md](HANDOFF.md) a [To-Do.md](To-Do.md).
 - SolaX, tepelné čerpadlo a kamery sem záměrně nepatří, jsou to samostatné projekty.
