@@ -185,7 +185,7 @@ Open-Meteo (`current` + `hourly` + `daily` sunrise/sunset, `forecast_days=2`, `E
 
 ### Topení (IR)
 
-IR LED na `PIN_IR_TX` (GPIO 7, přes BC547), protokol SYMPHONY 12 bit 38 kHz, 3 opakování. Ovladač je jednosmerný, takže stav (`on`, `mode`) je jen **odhad**: Power je toggle, Mode cykluje Ventilátor → I (1000 W) → II (2000 W), po Power vždy začíná ventilátor. Odhad se persistuje v `/heater.json`; po výpadku napájení se topení bere jako vypnuté (stejný okruh), po jiném restartu se použije uložený odhad. Pokud odhad nesedí, oprava přes Sync (`/api/heater/sync`).
+IR LED na `PIN_IR_TX` (GPIO 7, přes BC547), protokol SYMPHONY 12 bit 38 kHz, 3 opakování. Ovladač je jednosmerný, takže stav (`on`, `mode`) je jen **odhad**: Power je toggle, Mode cykluje Ventilátor → I (1000 W) → II (2000 W), po Power vždy začíná ventilátor. Nosná 38 kHz se generuje softwarově (busy-wait), proto `sendOne()` na dobu odeslání zvyšuje prioritu HeaterTasku (jinak ho FreeRTOS střídá s `loopTask` a bity se přehazují). Odhad se persistuje v `/heater.json`; po výpadku napájení se topení bere jako vypnuté (stejný okruh), po jiném restartu se použije uložený odhad. Pokud odhad nesedí, oprava přes Sync (`/api/heater/sync`).
 
 `HeaterTask` zpracovává frontu příkazů (HTTP handlery jen zařazují, nikdy neblokují) a každých 5 s vyhodnocuje limity a AUTO. ntfy se posílá jen z tasku přes frontu zpráv a jen u chyb (`NTFY_CMD_TOPIC`).
 
@@ -279,6 +279,7 @@ Priorita: červená > modrá > zelená. Pin podle `PIN_NEOPIXEL` z Arduino core 
 - Nový periodický úkol: statický task (buffer + stack) v `tasks.cpp`, start v `startBackgroundTasks()`; TLS tasky mají 12–16 KB stack.
 - Nový endpoint s pomalou prací: handler jen nastaví flag a `xTaskNotifyGive()` na task, výsledek jde přes websocket (vzor `/api/refresh`, `/api/ntfy-test`).
 - Do `config.h` jen přidávat nové defines, hodnoty existujících neměnit.
+- Serial log: žádné opakující se výpisy. Periodické věci logovat jen při změně stavu nebo zřídka (heartbeat 1 řádek / 5 min, mDNS jen změna hosta). `platformio.ini` má `-DCORE_DEBUG_LEVEL=0`, takže `log_e/log_w` z Arduino jádra (např. `no permits for creation` ze `serveStatic`) se nevypisují; vlastní `logLine()` to neovlivní.
 
 ## Záměrně není
 

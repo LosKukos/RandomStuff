@@ -76,8 +76,9 @@ bool updateLocalTime() {
 }
 
 String loadLastSentFile() {
+  if (!LittleFS.exists("/state.json")) { logLine(F("[STATE] /state.json not found")); return ""; }
   File f = LittleFS.open("/state.json", "r");
-  if (!f) { logLine(F("[STATE] /state.json not found")); return ""; }
+  if (!f) { logLine(F("[STATE] /state.json nejde otevrit")); return ""; }
 
   JsonDocument doc;
   DeserializationError err = deserializeJson(doc, f);

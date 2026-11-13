@@ -95,7 +95,8 @@ void initHeater() {
 
   const bool powerOn = esp_reset_reason() == ESP_RST_POWERON;
   bool hadAuto = false;
-  File f = LittleFS.open("/heater.json", "r");
+  File f;
+  if (LittleFS.exists("/heater.json")) f = LittleFS.open("/heater.json", "r");
   if (f) {
     JsonDocument d;
     if (!deserializeJson(d, f)) {
@@ -267,7 +268,13 @@ void heaterStatus(JsonDocument &doc) {
 static void sendOne(uint8_t v) {
   const HeaterBtn b = (HeaterBtn)(v & 0x7F);
   bcMark(BT_HEATER, BS_HEATER_SEND);
+  // IRremoteESP8266 generuje 38 kHz nosnou softwarove (busy-wait). Task s prioritou 1 sdili jadro
+  // s loopTaskem a FreeRTOS ho kazdou 1 ms strida (time-slicing) -> znicene casovani, prehozene bity
+  // (Power misto Plus/Spin). Behem odeslani proto prioritu zvysime, pak vratime.
+  const UBaseType_t oldPrio = uxTaskPriorityGet(NULL);
+  vTaskPrioritySet(NULL, configMAX_PRIORITIES - 2);
   irsend.sendSymphony(IR_CODES[b], 12, irRepeat);
+  vTaskPrioritySet(NULL, oldPrio);
   lastSendOk = true;
   logLine(String("[HEATER] IR sent: ") + heaterBtnName(b));
   bcMark(BT_HEATER, BS_IDLE);

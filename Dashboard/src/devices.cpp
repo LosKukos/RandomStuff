@@ -25,11 +25,26 @@ void startMdns() {
   }
 }
 
+// Loguje jen ZMENU stavu hosta (poprve / vyresen / selhal / jina IP), ne kazdy dotaz.
+static void logMdnsChange(const String &host, const String &state, const String &line) {
+  struct Seen { String host; String state; };
+  static Seen seen[8];
+  bool changed = false;
+  if (lockMutex(deviceMutex)) {
+    Seen *slot = nullptr;
+    for (auto &s : seen) { if (s.host == host) { slot = &s; break; } }
+    if (!slot) { for (auto &s : seen) { if (s.host.length() == 0) { slot = &s; slot->host = host; break; } } }
+    if (slot && slot->state != state) { slot->state = state; changed = true; }
+    unlockMutex(deviceMutex);
+  }
+  if (changed) logLine(line);
+}
+
 IPAddress resolveMdnsHost(const char* hostName) {
-  logValue(F("[mDNS] resolving: "), String(hostName) + ".local");
   IPAddress ip = MDNS.queryHost(hostName, 1500);
-  if (ip) logValue(F("[mDNS] resolved: "), ip.toString());
-  else    logValue(F("[mDNS] failed: "), String(hostName));
+  const String host(hostName);
+  if (ip) logMdnsChange(host, ip.toString(), String("[mDNS] ") + host + ".local -> " + ip.toString());
+  else    logMdnsChange(host, "FAIL", String("[mDNS] ") + host + ".local nenalezen");
   return ip;
 }
 
@@ -47,13 +62,13 @@ String resolveDeviceAddress(DeviceState &device, const char* hostName, const cha
   if (lockMutex(deviceMutex)) { cachedIp = device.ip; unlockMutex(deviceMutex); }
 
   if (cachedIp.length() > 0 && cachedIp != "0.0.0.0") {
-    logValue(F("[mDNS] using cached IP: "), cachedIp);
+    logMdnsChange(String(hostName) + "#c", cachedIp, String("[mDNS] ") + hostName + ": pouzita cachovana IP " + cachedIp);
     return cachedIp;
   }
 
   // zadna cache — zkus staticky fallback
   if (String(fallbackIp).length() > 0) {
-    logValue(F("[mDNS] using fallback: "), String(fallbackIp));
+    logMdnsChange(String(hostName) + "#f", String(fallbackIp), String("[mDNS] ") + hostName + ": pouzita fallback IP " + fallbackIp);
     if (lockMutex(deviceMutex)) { device.ip = String(fallbackIp); unlockMutex(deviceMutex); }
     return String(fallbackIp);
   }

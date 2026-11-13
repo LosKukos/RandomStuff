@@ -15,7 +15,8 @@ extern const char* discordRoleId;
 #define AUTO_SEND_START_MIN     1
 #define AUTO_SEND_WINDOW_MIN    15
 
-#define HEARTBEAT_INTERVAL_MS   10000UL
+#define HEARTBEAT_INTERVAL_MS   10000UL   // snapshot do RTC + broadcast dashboardu
+#define HEARTBEAT_LOG_INTERVAL_MS 300000UL // do serial logu jen 1 radek za 5 min
 #define WIFI_TIMEOUT_MS         10000UL
 #define DEVICE_POLL_INTERVAL_MS 5000UL
 

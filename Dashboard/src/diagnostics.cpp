@@ -1,4 +1,5 @@
 #include "diagnostics.h"
+#include "config.h"
 #include <WiFi.h>
 #include <esp_system.h>
 #include "log_util.h"
@@ -65,10 +66,13 @@ void doDiagnostics() {
 }
 
 void heartbeat() {
-  logLine(F("[HEARTBEAT] alive"));
-  logValue(F("[HEARTBEAT] uptime ms: "), (unsigned long)millis());
-  logValue(F("[HEARTBEAT] free heap: "), (unsigned long)ESP.getFreeHeap());
-  logValue(F("[HEARTBEAT] WiFi: "), (WiFi.status() == WL_CONNECTED) ? String("yes") : String("no"));
+  // jeden kompaktni radek co HEARTBEAT_LOG_INTERVAL_MS (heartbeat samotny bezi castěji)
+  static uint32_t lastLogMs = 0;
+  if (lastLogMs != 0 && millis() - lastLogMs < HEARTBEAT_LOG_INTERVAL_MS) return;
+  lastLogMs = millis();
+  const uint32_t s = millis() / 1000;
+  logLine(String("[HEARTBEAT] up ") + (s / 3600) + " h " + ((s % 3600) / 60) + " min, heap " + ESP.getFreeHeap() +
+          " (min " + ESP.getMinFreeHeap() + "), WiFi " + (WiFi.status() == WL_CONNECTED ? "ok" : "NE"));
 }
 
 String resetReasonStr() {
