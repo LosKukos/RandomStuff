@@ -1605,6 +1605,9 @@ button:disabled { opacity: 0.5; cursor: default; transform: none; }
 .hstep .val { color: #f8fafc; font-size: 1.6rem; font-weight: 800; letter-spacing: -.03em; line-height: 1.1; }
 .hctl { display: flex; gap: 8px; }
 .hsb { appearance: none; width: 46px; height: 46px; border-radius: 15px; border: 1px solid rgba(148,163,184,.2); background: linear-gradient(145deg,rgba(255,255,255,.10),rgba(255,255,255,.03)), rgba(30,41,59,.85); color: #e5e7eb; cursor: pointer; display: flex; align-items: center; justify-content: center; flex: none; }
+.hstep-time { flex-direction: column; align-items: stretch; }
+.hctl-time { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
+.hsb.txt { width: auto; min-width: 0; height: 42px; border-radius: 13px; font-size: .95rem; font-weight: 800; }
 .hsb svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 2.4; stroke-linecap: round; }
 .hrun { padding: 18px 20px; border-radius: 22px; background: rgba(255,255,255,.04); border: 1px solid rgba(148,163,184,.16); margin-bottom: 14px; }
 .hrun-top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }

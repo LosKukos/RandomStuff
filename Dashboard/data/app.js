@@ -919,6 +919,12 @@ function stepperHtml(label, val, fn) {
     `<button type="button" class="hsb" onclick="${fn}(1)" aria-label="Zvýšit">${ICON_PLUS}</button></div></div>`;
 }
 
+function timeStepperHtml(val) {
+  const b = (d) => `<button type="button" class="hsb txt" onclick="heaterStepTime(${d})" aria-label="${d > 0 ? "Přidat" : "Ubrat"} ${Math.abs(d)} min">${d > 0 ? "+" : "−"}${Math.abs(d)}</button>`;
+  return `<div class="hstep hstep-time"><div><div class="lbl">Časovač</div><div class="val">${val}</div></div>` +
+    `<div class="hctl hctl-time">${[-15, -5, -1, 1, 5, 15].map(b).join("")}</div></div>`;
+}
+
 function renderHeaterAuto() {
   const el = document.getElementById("heater-auto");
   const st = heaterState;
@@ -937,7 +943,7 @@ function renderHeaterAuto() {
       `<div class="hmini"><span class="lbl">Cíl</span><b>${target} °C</b></div>` +
       `<div class="hmini"><span class="lbl">Vypne při</span><b>${st.offAt} °C</b></div></div></div>`;
   }
-  html += `<div class="hsteps">${stepperHtml("Cílová teplota", target + " °C", "heaterStepTarget")}${stepperHtml("Časovač", fmtDur(minutes), "heaterStepTime")}</div>`;
+  html += `<div class="hsteps">${stepperHtml("Cílová teplota", target + " °C", "heaterStepTarget")}${timeStepperHtml(fmtDur(minutes))}</div>`;
   if (!running) {
     html += `<div class="heater-info" style="margin-top:16px"><div><span class="k">Teď uvnitř (DHT11):</span> <b>${fmtTemp(st.temp)}</b></div>` +
       `<div><span class="k">Zapne při:</span> <b>pod ${target} °C</b> · <span class="k">vypne při:</span> <b>${target + 2} °C a víc</b></div></div>` +
@@ -981,7 +987,7 @@ function heaterStepTarget(d) {
 function heaterStepTime(d) {
   const running = heaterState && heaterState.control === "auto";
   const cur = running ? heaterState.minutes : heaterSetup.minutes;
-  const v = Math.min(480, Math.max(15, cur + 15 * d));
+  const v = Math.min(480, Math.max(1, cur + d));
   if (running) { heaterAutoUpdate(heaterState.target, v); } else { heaterSetup.minutes = v; renderHeaterAuto(); }
 }
 async function heaterPost(path) {

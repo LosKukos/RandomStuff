@@ -49,7 +49,7 @@ static inline bool heaterBtnFromName(const char *s, HeaterBtn &out) {
 #define HEATER_AUTO_OVERHEAT    4.0f   // zasah pri cil + 4
 #define HEATER_AUTO_MIN_TARGET  15
 #define HEATER_AUTO_MAX_TARGET  35
-#define HEATER_AUTO_STEP_MIN    15
+#define HEATER_AUTO_STEP_MIN    1
 #define HEATER_AUTO_MAX_MIN     480
 
 enum AutoAct : uint8_t { AA_NONE = 0, AA_ON, AA_OFF };
