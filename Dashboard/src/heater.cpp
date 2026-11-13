@@ -194,8 +194,14 @@ void heaterAutoUpdate(int target, int minutes) {
   const bool timeChanged = nm != autoMinutes;
   const int oldTarget = autoTarget;
   autoTarget = nt;
-  autoMinutes = nm;
-  if (timeChanged) { autoTotalS = (uint32_t)nm * 60UL; autoStartMs = millis(); }   // odpocet znovu od ted
+  if (timeChanged) {
+    // posun zbyvajiciho casu o rozdil (start zustava), zbyva min. 1 minuta
+    const uint32_t el = (millis() - autoStartMs) / 1000UL;
+    int64_t total = (int64_t)autoTotalS + ((int64_t)nm - autoMinutes) * 60;
+    if (total < (int64_t)el + 60) total = (int64_t)el + 60;
+    autoTotalS = (uint32_t)total;
+    autoMinutes = heaterClampMinutes((int)((autoTotalS + 59) / 60));
+  }
   // zmena cile se projevi hned: znovu vyhodnotit posledni mereni (ne pri zasahu proti prehriti, ten pocita mereni)
   if (nt != oldTarget && !oh.active) autoLastSeen = 0;
   persist();

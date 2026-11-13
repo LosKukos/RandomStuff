@@ -190,7 +190,7 @@ IR LED na `PIN_IR_TX` (GPIO 7, přes BC547), protokol SYMPHONY 12 bit 38 kHz, 3 
 `HeaterTask` zpracovává frontu příkazů (HTTP handlery jen zařazují, nikdy neblokují) a každých 5 s vyhodnocuje limity a AUTO. ntfy se posílá jen z tasku přes frontu zpráv a jen u chyb (`NTFY_CMD_TOPIC`).
 
 - **Manual:** 7 tlačítek ovladače, limit 4 h (`HEATER_MANUAL_LIMIT_S`), pak se vypne.
-- **AUTO:** cíl 15–35 °C, časovač 1–480 min (UI tlačítka −15 −5 −1 +1 +5 +15). Podle indoor DHT11 zapne pod cílem (Power + Mode×2 = režim II) a vypne od cíl + 2 °C. Při cíl + 4 °C pošle Power; když 3 měření po sobě neklesají ani nestagnují, zkusí znovu (max 3×), pak AUTO ukončí. Chyba čidla (neplatné nebo starší než 5 min) AUTO ukončí a topení vypne. Změna času za běhu restartuje odpočet, konec → vypnout a zpět na manual. Restart AUTO ruší.
+- **AUTO:** cíl 15–35 °C, časovač 1–480 min (UI tlačítka −15 −5 −1 +1 +5 +15). Podle indoor DHT11 zapne pod cílem (Power + Mode×2 = režim II) a vypne od cíl + 2 °C. Při cíl + 4 °C pošle Power; když 3 měření po sobě neklesají ani nestagnují, zkusí znovu (max 3×), pak AUTO ukončí. Chyba čidla (neplatné nebo starší než 5 min) AUTO ukončí a topení vypne. Změna času za běhu posune zbývající čas o rozdíl (min. zbývá 1 min), konec → vypnout a zpět na manual. Restart AUTO ruší.
 - **Pravidlo:** AUTO neběží přes restart, tlačítka jsou za AUTO zamčená (409/503).
 
 Endpointy v tabulce níže, podrobnosti a zapojení v [ir.md](ir.md).
