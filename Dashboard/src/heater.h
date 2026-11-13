@@ -15,6 +15,7 @@ void heaterStatus(JsonDocument &doc);    // JSON pro GET /api/heater
 // AUTO: udrzuje teplotu z indoor DHT (zapne pod cil, vypne od cil + 2), po case se vypne
 bool heaterAutoStart(int target, int minutes);   // false = chybi platne cidlo
 void heaterAutoUpdate(int target, int minutes);  // za behu; zmena casu restartuje odpocet
+bool heaterAutoActive();                         // bezi AUTO (pro rychlejsi mereni teploty)
 void heaterAutoStop();                           // zastavi a vypne topeni
 void heaterClearAlert();
 void heaterSetRepeat(uint8_t r);              // dalsi IR ramce za stisk (0..5, default 3); uklada se

@@ -144,6 +144,7 @@ struct TempHistory {
   float vals[CLIMATE_TREND_SAMPLES];
   int   count = 0;
   int   head  = 0;   // kam se zapise dalsi vzorek
+  uint32_t lastPushMs = 0;
 };
 static TempHistory histIndoor, histOutdoor;
 
@@ -162,7 +163,7 @@ static void pushHistory(TempHistory &h, float t, float &trendOut, int &trendMinO
   if (h.count < CLIMATE_TREND_SAMPLES) h.count++;
 }
 
-static bool readInto(DhtSensor &dht, DhtReading &r, TempHistory &hist, const char *label) {
+static bool readInto(DhtSensor &dht, DhtReading &r, TempHistory &hist, const char *label, bool fast = false) {
   // cteni DHT je blokujici (~5-30 ms) - delat mimo mutex
   bcMark(BT_CLIMATE, dht.step);
   float t = NAN, h = NAN;
@@ -177,8 +178,9 @@ static bool readInto(DhtSensor &dht, DhtReading &r, TempHistory &hist, const cha
       r.fails = 0;
       r.valid = true;
       r.updatedAtMs = millis();
-      pushHistory(hist, t, r.trend, r.trendMin);
-    } else {
+      // trend ma 1 vzorek/min: rychla cteni se do historie nezapisuji
+      if (!fast) pushHistory(hist, t, r.trend, r.trendMin);
+    } else if (!fast) {
       r.fails++;
       if (r.fails >= CLIMATE_MAX_FAILS) r.valid = false;
     }
@@ -187,6 +189,10 @@ static bool readInto(DhtSensor &dht, DhtReading &r, TempHistory &hist, const cha
 
   if (!ok) logLine(String("[SENSORS] read failed: ") + label + " (" + dhtErrText(err) + ")");
   return ok;
+}
+
+bool pollIndoorFast() {
+  return readInto(dhtIndoor, climate.indoor, histIndoor, "indoor", true);
 }
 
 bool pollClimate() {

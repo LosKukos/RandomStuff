@@ -317,12 +317,20 @@ static void climateTask(void *pv) {
   logLine(F("[TASK][CLIMATE] started"));
   vTaskDelay(pdMS_TO_TICKS(2000));
   int lastReportKey = -1;   // den_v_roce*24 + hodina posledniho odeslaneho reportu
+  uint32_t lastFullPollMs = 0;
 
   for (;;) {
     bcMark(BT_CLIMATE, BS_CLIMATE_READ);
-    if (pollClimate()) {
-      bcMark(BT_CLIMATE, BS_BROADCAST);
-      broadcastDashboard();
+    // v AUTO se vnitrni teplota cte casteji (CLIMATE_POLL_AUTO_MS), uplne cteni + dashboard stale 1x/min
+    const bool autoFast = heaterAutoActive();
+    if (!autoFast || lastFullPollMs == 0 || millis() - lastFullPollMs >= CLIMATE_POLL_INTERVAL_MS - 1000UL) {
+      lastFullPollMs = millis();
+      if (pollClimate()) {
+        bcMark(BT_CLIMATE, BS_BROADCAST);
+        broadcastDashboard();
+      }
+    } else {
+      pollIndoorFast();
     }
 
     if (ntfyTestRequested) {
@@ -331,7 +339,7 @@ static void climateTask(void *pv) {
     }
 
     struct tm t;
-    uint32_t waitMs = CLIMATE_POLL_INTERVAL_MS;
+    uint32_t waitMs = heaterAutoActive() ? CLIMATE_POLL_AUTO_MS : CLIMATE_POLL_INTERVAL_MS;
 
     if (getNetReady() && wallClock(t)) {
       int key = t.tm_yday * 24 + t.tm_hour;

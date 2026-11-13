@@ -54,6 +54,7 @@ extern const char* discordRoleId;
 #define PIN_DHT_INDOOR  5    // DHT11
 #define PIN_DHT_OUTDOOR 4   // DHT22
 #define CLIMATE_POLL_INTERVAL_MS 60000UL   // 1 min
+#define CLIMATE_POLL_AUTO_MS     10000UL   // vnitrni DHT11 behem topeni AUTO (venkovni dal 1x/min)
 // Kolikrat po sobe selze cteni, nez se senzor oznaci jako nevalidni
 #define CLIMATE_MAX_FAILS 3
 // Napajeni venkovniho DHT22 z GPIO (senzor bere ~1,5 mA, LED s 1-2,2k rezistorem ~1 mA navic).

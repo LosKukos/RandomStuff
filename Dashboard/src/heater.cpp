@@ -215,6 +215,8 @@ static bool endAutoLocked() {
   return est.on;
 }
 
+bool heaterAutoActive() { return autoActive; }
+
 void heaterAutoStop() {
   if (!autoActive) return;
   lockMutex(heaterMutex, pdMS_TO_TICKS(200));
@@ -274,6 +276,11 @@ static void sendOne(uint8_t v) {
 static String fmt1(float t) { return String(t, 1); }
 
 // vyhodnoceni AUTO pri novem mereni
+// zasah proti prehrati pocita "mereni" po minutach (jako driv), i kdyz se teplota cte rychleji
+#define OH_COUNT_MIN_MS 55000UL
+static uint32_t ohCountMs = 0;
+static uint32_t autoLogMs = 0;
+
 static void autoEvaluate() {
   float t; uint32_t u;
   const bool ok = readIndoor(t, u);
@@ -304,8 +311,11 @@ static void autoEvaluate() {
   autoPrevTemp = t;
   const int target = autoTarget;
 
-  logLine(String("[HEATER] auto: nove mereni t=") + fmt1(t) + " cil=" + target + " overheat=" + (oh.active ? "ano" : "ne"));
-  const OhAct oa = heaterOverheatStep(oh, t, prev, (float)target, est.on);
+  OhAct oa = OH_NONE;
+  if (!oh.active || millis() - ohCountMs >= OH_COUNT_MIN_MS) {
+    oa = heaterOverheatStep(oh, t, prev, (float)target, est.on);
+    ohCountMs = millis();
+  }
   if (oa == OH_PRESS) {
     const uint8_t att = oh.attempts;
     clearAlertLocked();
@@ -327,7 +337,11 @@ static void autoEvaluate() {
   const AutoAct act = heaterAutoDecide(est.on, t, (float)target);
   const bool dbgOn = est.on;
   unlockMutex(heaterMutex);
-  logLine(String("[HEATER] auto: t=") + fmt1(t) + " cil=" + target + " vypne od " + (target + (int)HEATER_AUTO_HYST) + " odhad=" + (dbgOn ? "ON" : "OFF") + " -> " + (act == AA_ON ? "ZAPNOUT" : act == AA_OFF ? "VYPNOUT" : "nic"));
+  // log: pri akci hned, jinak max 1x/min (mereni jsou casta)
+  if (act != AA_NONE || autoLogMs == 0 || millis() - autoLogMs >= 60000UL) {
+    autoLogMs = millis();
+    logLine(String("[HEATER] auto: t=") + fmt1(t) + " cil=" + target + " vypne od " + (target + (int)HEATER_AUTO_HYST) + " odhad=" + (dbgOn ? "ON" : "OFF") + " overheat=" + (oh.active ? "ano" : "ne") + " -> " + (act == AA_ON ? "ZAPNOUT" : act == AA_OFF ? "VYPNOUT" : "nic"));
+  }
   if (act == AA_ON) {
     enqueue(HB_POWER); enqueue(HB_MODE); enqueue(HB_MODE);   // Power -> ventilator -> I -> II
   } else if (act == AA_OFF) {
