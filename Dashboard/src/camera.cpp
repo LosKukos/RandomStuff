@@ -3,6 +3,7 @@
 #include <lwip/sockets.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <time.h>
 #include "config.h"
 #include "state.h"
 #include "log_util.h"
@@ -46,6 +47,33 @@ static bool hostAlive(const IPAddress &ip, uint16_t port, int timeoutMs) {
   return alive;
 }
 
+// kruhovy buffer zmen stavu (RAM, ztrati se po restartu), chraneno deviceMutex
+static uint32_t histEpoch[CAMERA_HISTORY_MAX];
+static bool     histOnline[CAMERA_HISTORY_MAX];
+static int      histCount = 0, histHead = 0;   // histHead = kam se zapise dalsi
+
+static void recordChangeLocked(bool online) {
+  const time_t now = time(nullptr);
+  histEpoch[histHead]  = (now > 1700000000) ? (uint32_t)now : 0;
+  histOnline[histHead] = online;
+  histHead = (histHead + 1) % CAMERA_HISTORY_MAX;
+  if (histCount < CAMERA_HISTORY_MAX) histCount++;
+}
+
+int cameraHistory(uint32_t *epoch, bool *online, int max) {
+  int n = 0;
+  if (lockMutex(deviceMutex)) {
+    for (int i = 0; i < histCount && n < max; i++) {
+      const int idx = (histHead - 1 - i + 2 * CAMERA_HISTORY_MAX) % CAMERA_HISTORY_MAX;
+      epoch[n] = histEpoch[idx];
+      online[n] = histOnline[idx];
+      n++;
+    }
+    unlockMutex(deviceMutex);
+  }
+  return n;
+}
+
 void cameraPoll() {
   if (WiFi.status() != WL_CONNECTED) return;
 
@@ -73,6 +101,7 @@ void cameraPoll() {
       if (cameraState.online && ++offStreak >= 2) { cameraState.online = false; changed = true; offStreak = 0; }
     }
     nowOnline = cameraState.online;
+    if (first || changed) recordChangeLocked(nowOnline);
     unlockMutex(deviceMutex);
   }
 
@@ -82,6 +111,7 @@ void cameraPoll() {
   }
   if (changed) {
     ntfyPostQuiet(nowOnline ? "Kamera ONLINE" : "Kamera OFFLINE",
-                  String(CAMERA_NAME) + " " + CAMERA_IP + (nowOnline ? " je online." : " je offline."));
+                  String(CAMERA_NAME) + " " + CAMERA_IP + (nowOnline ? " je online." : " je offline."),
+                  "default", NTFY_CMD_TOPIC);
   }
 }

@@ -366,6 +366,31 @@ function renderDesktop(d) {
     </div>`;
 }
 
+let cameraOpen = false;   // rozbalena historie (preziva prekresleni)
+function toggleCameraHistory() { cameraOpen = !cameraOpen; const el = document.getElementById("camera-history"); if (el) el.classList.toggle("open", cameraOpen); }
+
+function fmtOutage(sec) {
+  if (sec < 90) return `${Math.round(sec)} s`;
+  if (sec < 5400) return `${Math.round(sec / 60)} min`;
+  return `${(sec / 3600).toFixed(1)} h`;
+}
+
+// history = [[epoch, online(0/1)], ...] od nejnovejsi
+function cameraHistoryHtml(history) {
+  if (!history || !history.length) return `<div class="dev-meta">Zatím žádné změny stavu.</div>`;
+  const fmt = (ep) => ep ? new Date(ep * 1000).toLocaleString("cs-CZ", { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" }) : "čas neznámý";
+  const rows = history.map(([ep, on], i) => {
+    let note = "";
+    if (on && history[i + 1] && history[i + 1][1] === 0 && ep && history[i + 1][0]) {
+      note = ` · výpadek ${fmtOutage(ep - history[i + 1][0])}`;
+    } else if (!on && i === 0) {
+      note = ep ? ` · trvá ${fmtOutage(Date.now() / 1000 - ep)}` : "";
+    }
+    return `<div class="dev-meta"><span class="pill ${on ? "pill-ok" : "pill-bad"}">${on ? "online" : "offline"}</span> ${escapeHtml(fmt(ep))}${note}</div>`;
+  });
+  return `<div class="dev-meta" style="margin-bottom:6px">Historie (od restartu ESP)</div>${rows.join("")}`;
+}
+
 function renderCamera(c) {
   if (!cameraCardEl) return;
   if (!c) { cameraCardEl.innerHTML = ""; return; }
@@ -382,7 +407,7 @@ function renderCamera(c) {
   const nameColor = online ? "var(--accent)" : "var(--muted2)";
 
   cameraCardEl.innerHTML = `
-    <div class="dev-card">
+    <div class="dev-card" onclick="toggleCameraHistory()">
       <div class="dev-card-top">
         <div>
           <div class="dev-name"><span class="dev-name-text" style="color:${nameColor}">${escapeHtml(c.name || "Kamera")}</span></div>
@@ -392,6 +417,7 @@ function renderCamera(c) {
           <span class="pill ${pillCls}">${pillTxt}</span>
         </div>
       </div>
+      <div class="dev-details${cameraOpen ? " open" : ""}" id="camera-history">${cameraHistoryHtml(c.history)}</div>
     </div>`;
 }
 

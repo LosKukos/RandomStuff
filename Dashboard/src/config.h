@@ -91,6 +91,7 @@ extern const char* discordRoleId;
 #define CAMERA_CHECK_TIMEOUT_MS     1000
 #define CAMERA_PORT_A               554        // RTSP
 #define CAMERA_PORT_B               80
+#define CAMERA_HISTORY_MAX          20         // kolik poslednich zmen stavu se drzi v RAM
 // Trend teploty: okno = CLIMATE_TREND_SAMPLES minut (1 vzorek/min), RAM only
 #define CLIMATE_TREND_SAMPLES   60
 #define CLIMATE_TREND_MIN_SAMPLES 30   // min. historie, nez se trend ukaze

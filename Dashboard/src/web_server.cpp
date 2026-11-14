@@ -10,6 +10,7 @@
 #include "ntfy.h"
 #include "diagnostics.h"
 #include "desktop.h"
+#include "camera.h"
 #include "diagnostics.h"
 #include "weather.h"
 #include "sensors.h"
@@ -191,6 +192,15 @@ String buildDashboardJson(bool wsWrap) {
     c["name"]      = CAMERA_NAME;
     c["ip"]        = CAMERA_IP;
     c["checkAgeS"] = chk ? (int32_t)((millis() - chk) / 1000) : -1;
+    uint32_t hEp[CAMERA_HISTORY_MAX];
+    bool hOn[CAMERA_HISTORY_MAX];
+    const int hn = cameraHistory(hEp, hOn, CAMERA_HISTORY_MAX);
+    JsonArray hist = c["history"].to<JsonArray>();
+    for (int i = 0; i < hn; i++) {
+      JsonArray e = hist.add<JsonArray>();
+      e.add(hEp[i]);
+      e.add(hOn[i] ? 1 : 0);
+    }
   }
 
   String out;
