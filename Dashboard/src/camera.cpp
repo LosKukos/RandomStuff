@@ -3,6 +3,10 @@
 #include <lwip/sockets.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <lwip/inet_chksum.h>
+#include <lwip/icmp.h>
+#include <lwip/ip.h>
+#include <lwip/inet.h>
 #include <time.h>
 #include <LittleFS.h>
 #include <ArduinoJson.h>
@@ -11,6 +15,59 @@
 #include "log_util.h"
 #include "ntfy.h"
 #include "web_server.h"
+
+#define STR_(x) #x
+#define STR(x) STR_(x)
+
+// ICMP echo (ping) pres raw socket. true = prisla odpoved od `ip`.
+// Funguje bez ohledu na otevrene porty (kamery casto zahazuji TCP na zavrene porty).
+static bool icmpAlive(const IPAddress &ip, int timeoutMs) {
+  static uint16_t seq = 0;
+  const uint16_t ID = 0xCA3E;
+  const int s = socket(AF_INET, SOCK_RAW, IP_PROTO_ICMP);
+  if (s < 0) return false;
+
+  struct timeval tv;
+  tv.tv_sec = timeoutMs / 1000;
+  tv.tv_usec = (timeoutMs % 1000) * 1000;
+  setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+  uint8_t pkt[sizeof(struct icmp_echo_hdr) + 8];
+  struct icmp_echo_hdr *e = (struct icmp_echo_hdr *)pkt;
+  ICMPH_TYPE_SET(e, ICMP_ECHO);
+  ICMPH_CODE_SET(e, 0);
+  e->chksum = 0;
+  e->id = ID;
+  e->seqno = htons(++seq);
+  for (size_t i = 0; i < 8; i++) pkt[sizeof(struct icmp_echo_hdr) + i] = (uint8_t)i;
+  e->chksum = inet_chksum(e, sizeof(pkt));
+
+  struct sockaddr_in to;
+  memset(&to, 0, sizeof(to));
+  to.sin_len = sizeof(to);
+  to.sin_family = AF_INET;
+  to.sin_addr.s_addr = (uint32_t)ip;
+
+  bool alive = false;
+  if (sendto(s, pkt, sizeof(pkt), 0, (struct sockaddr *)&to, sizeof(to)) > 0) {
+    const uint32_t t0 = millis();
+    while (!alive && millis() - t0 < (uint32_t)timeoutMs) {
+      char buf[64];
+      struct sockaddr_in from;
+      socklen_t fl = sizeof(from);
+      const int len = recvfrom(s, buf, sizeof(buf), 0, (struct sockaddr *)&from, &fl);
+      if (len < 0) break;   // timeout
+      if (len >= (int)(sizeof(struct ip_hdr) + sizeof(struct icmp_echo_hdr))) {
+        const struct ip_hdr *iph = (const struct ip_hdr *)buf;
+        const struct icmp_echo_hdr *r = (const struct icmp_echo_hdr *)(buf + IPH_HL(iph) * 4);
+        if (ICMPH_TYPE(r) == ICMP_ER && r->id == ID && r->seqno == htons(seq) &&
+            from.sin_addr.s_addr == (uint32_t)ip) alive = true;
+      }
+    }
+  }
+  close(s);
+  return alive;
+}
 
 // true = stroj na IP zije: port se otevrel NEBO odpovedel RST (ECONNREFUSED).
 // false = zadna odpoved do timeoutu (vypnuto / mimo WiFi).
@@ -131,8 +188,12 @@ void cameraPoll() {
   static bool historyLoaded = false;
   if (!historyLoaded) { historyLoaded = true; loadHistory(); }
 
-  const bool up = hostAlive(ip, CAMERA_PORT_A, CAMERA_CHECK_TIMEOUT_MS) ||
-                  hostAlive(ip, CAMERA_PORT_B, CAMERA_CHECK_TIMEOUT_MS);
+  // ping, pak TCP (RST/otevreny port = zije); staci jedna odpoved
+  const char *how = nullptr;
+  if (icmpAlive(ip, CAMERA_CHECK_TIMEOUT_MS)) how = "ping";
+  else if (hostAlive(ip, CAMERA_PORT_A, CAMERA_CHECK_TIMEOUT_MS)) how = "tcp " STR(CAMERA_PORT_A);
+  else if (hostAlive(ip, CAMERA_PORT_B, CAMERA_CHECK_TIMEOUT_MS)) how = "tcp " STR(CAMERA_PORT_B);
+  const bool up = (how != nullptr);
 
   // debounce: do "online" hned, do "offline" az po 2 po sobe jdoucich neuspechech
   static int offStreak = 0;
@@ -163,7 +224,7 @@ void cameraPoll() {
 
   if (recorded) persistHistory();
   if (first || changed) {
-    logLine(String("[CAMERA] ") + CAMERA_IP + (nowOnline ? " online" : " offline"));
+    logLine(String("[CAMERA] ") + CAMERA_IP + (nowOnline ? " online" : " offline") + (how ? String(" (") + how + ")" : String("")));
     broadcastDashboard();
   }
   if (changed) {

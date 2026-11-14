@@ -88,7 +88,7 @@ extern const char* discordRoleId;
 #define CAMERA_NAME                 "Kamera Xiaomi C302"
 #define CAMERA_IP                   "10.0.1.103"
 #define CAMERA_CHECK_INTERVAL_MS    30000UL
-#define CAMERA_CHECK_TIMEOUT_MS     1000
+#define CAMERA_CHECK_TIMEOUT_MS     700        // na kazdou zkousku (ping, port A, port B)
 #define CAMERA_PORT_A               554        // RTSP
 #define CAMERA_PORT_B               80
 #define CAMERA_HISTORY_MAX          20         // kolik poslednich zmen stavu se drzi v RAM
