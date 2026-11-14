@@ -30,7 +30,7 @@ Dashboard/
     └── rfid.md          RC522 čtečka, tagy, zapojení
 ```
 
-Za běhu vznikají na LittleFS ještě `/state.json` (`last_sent`), `/watch.json` (sledovaná jména) a `/heater.json` (odhad stavu topení, cíl a čas AUTO).
+Za běhu vznikají na LittleFS ještě `/state.json` (`last_sent`), `/watch.json` (sledovaná jména) `/heater.json` (odhad stavu topení, cíl a čas AUTO) a `/camera.json` (historie stavu kamery).
 
 * * *
 
@@ -50,7 +50,7 @@ Za běhu vznikají na LittleFS ještě `/state.json` (`last_sent`), `/watch.json
 | `ntfy.h/.cpp`        | `sendNtfyPanic()` (SOS), `sendNtfyReport()` (hodinový report, ukládá poslední kód), `ntfyPostQuiet()` (potvrzení, ONLINE/OFFLINE).      |
 | `ntfy_cmd.h/.cpp`    | Poll příkazového topicu (`NTFY_CMD_TOPIC`), zatím jediný příkaz `WOL`.                                                                   |
 | `wol.h/.cpp`         | `sendMagicPacket()` – UDP broadcast na porty 9 a 7.                                                                                      |
-| `camera.h/.cpp`      | Health check IP kamery Xiaomi C302 (`CAMERA_IP`, TCP connect, RST = online), debounce, ntfy ONLINE/OFFLINE na `NTFY_CMD_TOPIC`, historie změn stavu (RAM, 20 položek), rozklikávací karta.            |
+| `camera.h/.cpp`      | Health check IP kamery Xiaomi C302 (`CAMERA_IP`, TCP connect, RST = online), debounce, ntfy ONLINE/OFFLINE na `NTFY_CMD_TOPIC`, historie změn stavu (20 položek, persistentní v `/camera.json`), rozklikávací karta.            |
 | `desktop.h/.cpp`     | `wakeDesktop()`, health check desktopu (TCP connect), debounce, ntfy ONLINE/OFFLINE.                                                     |
 | `sensors.h/.cpp`     | DHT11 (indoor) + DHT22 (outdoor) přes vlastní čtečku s omezenými timeouty, validace po sobě jdoucích selhání, kruhový buffer pro trend.   |
 | `heater.h/.cpp`, `heater_logic.h` | IR ovládání přímotopu (viz [Topení](#topení-ir)); `heater_logic.h` je čistá logika bez HW (testovatelná na PC).                |

@@ -4,6 +4,8 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <time.h>
+#include <LittleFS.h>
+#include <ArduinoJson.h>
 #include "config.h"
 #include "state.h"
 #include "log_util.h"
@@ -52,12 +54,58 @@ static uint32_t histEpoch[CAMERA_HISTORY_MAX];
 static bool     histOnline[CAMERA_HISTORY_MAX];
 static int      histCount = 0, histHead = 0;   // histHead = kam se zapise dalsi
 
-static void recordChangeLocked(bool online) {
-  const time_t now = time(nullptr);
-  histEpoch[histHead]  = (now > 1700000000) ? (uint32_t)now : 0;
+static void pushLocked(uint32_t epoch, bool online) {
+  histEpoch[histHead]  = epoch;
   histOnline[histHead] = online;
   histHead = (histHead + 1) % CAMERA_HISTORY_MAX;
   if (histCount < CAMERA_HISTORY_MAX) histCount++;
+}
+
+static void recordChangeLocked(bool online) {
+  const time_t now = time(nullptr);
+  pushLocked((now > 1700000000) ? (uint32_t)now : 0, online);
+}
+
+// Persistence: /camera.json = [[epoch, online(0/1)], ...] od nejnovejsi. Zapis jen pri zmene stavu.
+#define CAMERA_HISTORY_FILE "/camera.json"
+
+static void loadHistory() {
+  if (!LittleFS.exists(CAMERA_HISTORY_FILE)) return;
+  File f = LittleFS.open(CAMERA_HISTORY_FILE, "r");
+  if (!f) return;
+  JsonDocument d;
+  const DeserializationError err = deserializeJson(d, f);
+  f.close();
+  if (err || !d.is<JsonArray>()) { logLine(F("[CAMERA] historie: neplatny soubor, ignoruji")); return; }
+  JsonArray a = d.as<JsonArray>();
+  if (lockMutex(deviceMutex)) {
+    histCount = 0; histHead = 0;
+    // soubor je od nejnovejsi, do bufferu se pise od nejstarsi
+    const int keep = ((int)a.size() < CAMERA_HISTORY_MAX) ? (int)a.size() : CAMERA_HISTORY_MAX;
+    for (int i = keep - 1; i >= 0; i--) {
+      JsonArray e = a[i];
+      pushLocked(e[0] | 0u, (e[1] | 0) != 0);
+    }
+    unlockMutex(deviceMutex);
+  }
+  logValue(F("[CAMERA] historie nactena, zmen: "), histCount);
+}
+
+static void persistHistory() {
+  uint32_t ep[CAMERA_HISTORY_MAX];
+  bool on[CAMERA_HISTORY_MAX];
+  const int n = cameraHistory(ep, on, CAMERA_HISTORY_MAX);
+  File f = LittleFS.open(CAMERA_HISTORY_FILE, "w");
+  if (!f) return;
+  JsonDocument d;
+  JsonArray a = d.to<JsonArray>();
+  for (int i = 0; i < n; i++) {
+    JsonArray e = a.add<JsonArray>();
+    e.add(ep[i]);
+    e.add(on[i] ? 1 : 0);
+  }
+  serializeJson(d, f);
+  f.close();
 }
 
 int cameraHistory(uint32_t *epoch, bool *online, int max) {
@@ -80,12 +128,15 @@ void cameraPoll() {
   IPAddress ip;
   if (!ip.fromString(CAMERA_IP)) return;
 
+  static bool historyLoaded = false;
+  if (!historyLoaded) { historyLoaded = true; loadHistory(); }
+
   const bool up = hostAlive(ip, CAMERA_PORT_A, CAMERA_CHECK_TIMEOUT_MS) ||
                   hostAlive(ip, CAMERA_PORT_B, CAMERA_CHECK_TIMEOUT_MS);
 
   // debounce: do "online" hned, do "offline" az po 2 po sobe jdoucich neuspechech
   static int offStreak = 0;
-  bool changed = false, nowOnline = false, first = false;
+  bool changed = false, nowOnline = false, first = false, recorded = false;
 
   if (lockMutex(deviceMutex)) {
     cameraState.lastCheckMs = millis() ? millis() : 1;
@@ -101,10 +152,16 @@ void cameraPoll() {
       if (cameraState.online && ++offStreak >= 2) { cameraState.online = false; changed = true; offStreak = 0; }
     }
     nowOnline = cameraState.online;
-    if (first || changed) recordChangeLocked(nowOnline);
+    // po restartu se uvodni stav zapise jen kdyz se lisi od posledniho ulozeneho
+    const int newest = (histHead - 1 + CAMERA_HISTORY_MAX) % CAMERA_HISTORY_MAX;
+    if (changed || (first && (histCount == 0 || histOnline[newest] != nowOnline))) {
+      recordChangeLocked(nowOnline);
+      recorded = true;
+    }
     unlockMutex(deviceMutex);
   }
 
+  if (recorded) persistHistory();
   if (first || changed) {
     logLine(String("[CAMERA] ") + CAMERA_IP + (nowOnline ? " online" : " offline"));
     broadcastDashboard();

@@ -388,7 +388,7 @@ function cameraHistoryHtml(history) {
     }
     return `<div class="dev-meta"><span class="pill ${on ? "pill-ok" : "pill-bad"}">${on ? "online" : "offline"}</span> ${escapeHtml(fmt(ep))}${note}</div>`;
   });
-  return `<div class="dev-meta" style="margin-bottom:6px">Historie (od restartu ESP)</div>${rows.join("")}`;
+  return `<div class="dev-meta" style="margin-bottom:6px">Historie změn stavu</div>${rows.join("")}`;
 }
 
 function renderCamera(c) {
