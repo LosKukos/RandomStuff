@@ -50,6 +50,7 @@ Za běhu vznikají na LittleFS ještě `/state.json` (`last_sent`), `/watch.json
 | `ntfy.h/.cpp`        | `sendNtfyPanic()` (SOS), `sendNtfyReport()` (hodinový report, ukládá poslední kód), `ntfyPostQuiet()` (potvrzení, ONLINE/OFFLINE).      |
 | `ntfy_cmd.h/.cpp`    | Poll příkazového topicu (`NTFY_CMD_TOPIC`), zatím jediný příkaz `WOL`.                                                                   |
 | `wol.h/.cpp`         | `sendMagicPacket()` – UDP broadcast na porty 9 a 7.                                                                                      |
+| `camera.h/.cpp`      | Health check IP kamery Xiaomi C302 (`CAMERA_IP`, TCP connect, RST = online), debounce, ntfy ONLINE/OFFLINE, karta v dashboardu.                                          |
 | `desktop.h/.cpp`     | `wakeDesktop()`, health check desktopu (TCP connect), debounce, ntfy ONLINE/OFFLINE.                                                     |
 | `sensors.h/.cpp`     | DHT11 (indoor) + DHT22 (outdoor) přes vlastní čtečku s omezenými timeouty, validace po sobě jdoucích selhání, kruhový buffer pro trend.   |
 | `heater.h/.cpp`, `heater_logic.h` | IR ovládání přímotopu (viz [Topení](#topení-ir)); `heater_logic.h` je čistá logika bez HW (testovatelná na PC).                |

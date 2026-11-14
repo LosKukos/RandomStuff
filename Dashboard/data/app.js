@@ -10,6 +10,7 @@ const forecastRowEl = document.getElementById("forecast-row");
 const climateRowEl  = document.getElementById("climate-row");
 const moonCardEl    = document.getElementById("moon-card");
 const desktopCardEl = document.getElementById("desktop-card");
+const cameraCardEl  = document.getElementById("camera-card");
 const devicesEl    = document.getElementById("devices");
 const statIpEl     = document.getElementById("stat-ip");
 const statNetEl    = document.getElementById("stat-net");
@@ -365,6 +366,35 @@ function renderDesktop(d) {
     </div>`;
 }
 
+function renderCamera(c) {
+  if (!cameraCardEl) return;
+  if (!c) { cameraCardEl.innerHTML = ""; return; }
+
+  const online = Boolean(c.online);
+  let pillCls = "pill-bad", pillTxt = "offline";
+  if (!c.known)    { pillCls = "pill-warn"; pillTxt = "zjišťuji…"; }
+  else if (online) { pillCls = "pill-ok";   pillTxt = "online"; }
+
+  const meta = [
+    escapeHtml(c.ip || ""),
+    c.checkAgeS >= 0 ? `kontrola před ${c.checkAgeS} s` : ""
+  ].filter(Boolean).join(" · ");
+  const nameColor = online ? "var(--accent)" : "var(--muted2)";
+
+  cameraCardEl.innerHTML = `
+    <div class="dev-card">
+      <div class="dev-card-top">
+        <div>
+          <div class="dev-name"><span class="dev-name-text" style="color:${nameColor}">${escapeHtml(c.name || "Kamera")}</span></div>
+          <div class="dev-meta">${meta}</div>
+        </div>
+        <div class="dev-right">
+          <span class="pill ${pillCls}">${pillTxt}</span>
+        </div>
+      </div>
+    </div>`;
+}
+
 async function wolDesktop() {
   wolPendingUntil = Date.now() + WAKE_WINDOW_S * 1000;
   await apiPost("/api/wol");
@@ -652,6 +682,7 @@ function consumePayload(data) {
   renderWeather(data.weather);
   renderMoon(data.weather);
   renderDesktop(data.desktop);
+  renderCamera(data.camera);
   renderDevices(data.devices);
   renderAlarm(data.alarm);
   lastUpdateTime = new Date();

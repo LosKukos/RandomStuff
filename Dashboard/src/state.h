@@ -195,3 +195,12 @@ struct DesktopState {
 };
 
 extern DesktopState desktop;
+
+// Sledovana kamera (health check), chraneno deviceMutex
+struct HostState {
+  bool     known;         // uz proběhla aspon jedna kontrola
+  bool     online;
+  uint32_t lastCheckMs;   // millis() posledni kontroly (0 = nikdy)
+};
+
+extern HostState cameraState;

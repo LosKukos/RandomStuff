@@ -82,6 +82,15 @@ extern const char* discordRoleId;
 #define DESKTOP_CHECK_TIMEOUT_MS    1000
 #define DESKTOP_PORT_A              3389       // RDP
 #define DESKTOP_PORT_B              445        // SMB
+
+// Sledovana IP kamera (Xiaomi C302): online/offline podle TCP connect. Zavreny port, ktery
+// odpovi RST ("connection refused"), se bere jako ONLINE (stroj zije, jen port neposloucha).
+#define CAMERA_NAME                 "Kamera Xiaomi C302"
+#define CAMERA_IP                   "10.0.1.103"
+#define CAMERA_CHECK_INTERVAL_MS    30000UL
+#define CAMERA_CHECK_TIMEOUT_MS     1000
+#define CAMERA_PORT_A               554        // RTSP
+#define CAMERA_PORT_B               80
 // Trend teploty: okno = CLIMATE_TREND_SAMPLES minut (1 vzorek/min), RAM only
 #define CLIMATE_TREND_SAMPLES   60
 #define CLIMATE_TREND_MIN_SAMPLES 30   // min. historie, nez se trend ukaze

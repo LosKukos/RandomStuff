@@ -201,3 +201,4 @@ ClimateState climate = { { false, 0, 0, 0, 0, 0, 0 }, { false, 0, 0, 0, 0, 0, 0 
 // =====================================================
 
 DesktopState desktop = { false, false, 0, 0 };
+HostState cameraState = { false, false, 0 };

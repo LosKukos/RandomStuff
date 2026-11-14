@@ -178,6 +178,21 @@ String buildDashboardJson(bool wsWrap) {
     d["wolAgeS"]   = wol ? (int32_t)((millis() - wol) / 1000) : -1;
   }
 
+  {
+    bool known = false, online = false;
+    uint32_t chk = 0;
+    if (lockMutex(deviceMutex)) {
+      known = cameraState.known; online = cameraState.online; chk = cameraState.lastCheckMs;
+      unlockMutex(deviceMutex);
+    }
+    JsonObject c = doc["camera"].to<JsonObject>();
+    c["known"]     = known;
+    c["online"]    = online;
+    c["name"]      = CAMERA_NAME;
+    c["ip"]        = CAMERA_IP;
+    c["checkAgeS"] = chk ? (int32_t)((millis() - chk) / 1000) : -1;
+  }
+
   String out;
   serializeJson(doc, out);
   return out;

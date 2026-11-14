@@ -14,6 +14,7 @@
 #include "diagnostics.h"
 #include "ntfy_cmd.h"
 #include "desktop.h"
+#include "camera.h"
 #include "web_server.h"
 #include "breadcrumbs.h"
 #include "heater.h"
@@ -372,7 +373,7 @@ static void climateTask(void *pv) {
 static void ntfyCmdTask(void *pv) {
   logLine(F("[TASK][NTFY-CMD] started"));
   vTaskDelay(pdMS_TO_TICKS(10000));
-  uint32_t lastNtfy = 0, lastDesktop = 0;
+  uint32_t lastNtfy = 0, lastDesktop = 0, lastCamera = 0;
   for (;;) {
     if (getNetReady()) {
       const uint32_t now = millis();
@@ -382,6 +383,12 @@ static void ntfyCmdTask(void *pv) {
         bcMark(BT_NTFYCMD, BS_DESKTOP_POLL);
         desktopPoll();
         lastDesktop = millis();
+        bcMark(BT_NTFYCMD, BS_IDLE);
+      }
+      if (now - lastCamera >= CAMERA_CHECK_INTERVAL_MS || lastCamera == 0) {
+        bcMark(BT_NTFYCMD, BS_DESKTOP_POLL);
+        cameraPoll();
+        lastCamera = millis();
         bcMark(BT_NTFYCMD, BS_IDLE);
       }
       if (millis() - lastNtfy >= NTFY_CMD_POLL_INTERVAL_MS || lastNtfy == 0) {
